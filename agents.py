@@ -150,7 +150,7 @@ class SkipAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        if self.should_book(message, state) and self.has_required_data(state):
+        if self.should_book(message, state):
             # Only if user explicitly said yes or similar
             user_confirmed = message.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']
             if user_confirmed:
@@ -234,7 +234,7 @@ class MAVAgent(BaseAgent):
 
  
     def get_next_response(self, message, state, conversation_id):
-        if self.should_book(message, state) and self.has_required_data(state):
+        if self.should_book(message, state):
             # Only if user explicitly said yes or similar
             user_confirmed = message.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']
             if user_confirmed:
@@ -324,7 +324,7 @@ class GrabAgent(BaseAgent):
         return data
         
     def get_next_response(self, message, state, conversation_id):
-        if self.should_book(message, state) and self.has_required_data(state):
+        if self.should_book(message, state):
             # Only if user explicitly said yes or similar
             user_confirmed = message.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']
             if user_confirmed:
