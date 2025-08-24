@@ -203,14 +203,14 @@ class MAVAgent(BaseAgent):
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
-                data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
-                data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
-                data['type'] = '4yd'
-            else:
-                data['type'] = '4yd'  # Default
+        if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
+            data['type'] = '8yd'
+        elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+            data['type'] = '6yd'
+        elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+            data['type'] = '4yd'
+        else:
+            data['type'] = '4yd'  # Default
         return data
 
     def get_next_response(self, message, state, conversation_id):
