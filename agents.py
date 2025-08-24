@@ -59,9 +59,30 @@ class BaseAgent:
         return data
 
     def should_book(self, message):
-        """Check if user wants to proceed with booking"""
-        positive_words = ['yes', 'yeah', 'yep', 'ok', 'alright', 'sure', 'lets do it', 'go ahead', 'book it', 'proceed']
-        return any(word in message.lower() for word in positive_words)
+        """Check if user wants to proceed with booking - EXPANDED WITH 10+ MORE OPTIONS"""
+        message_lower = message.lower()
+        
+        # Direct booking requests
+        booking_phrases = [
+            'payment link', 'pay link', 'booking', 'book it', 'book this',
+            'send payment', 'complete booking', 'finish booking', 'proceed with booking',
+            # 10 MORE OPTIONS:
+            'confirm booking', 'make booking', 'create booking', 'place order',
+            'send me the link', 'i want to book', 'ready to book', 'lets book',
+            'checkout', 'complete order', 'finalize booking', 'secure booking',
+            'reserve this', 'confirm this', 'i\'ll take it', 'that works',
+            'perfect', 'sounds good', 'thats fine', 'arrange this'
+        ]
+        
+        # Positive responses
+        positive_words = ['yes', 'yeah', 'yep', 'ok', 'okay', 'alright', 'sure', 'lets do it', 'go ahead', 'proceed']
+        
+        # Check for explicit booking requests
+        if any(phrase in message_lower for phrase in booking_phrases):
+            return True
+            
+        # Check for positive responses
+        return any(word in message_lower for word in positive_words)
 
     def should_get_price(self, message):
         """Check if user wants pricing"""
@@ -206,9 +227,12 @@ class SkipAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         """FIXED LOGIC"""
-        # If user says yes and we have pricing, complete booking
-        if self.should_book(message) and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER SAID YES - COMPLETING BOOKING")
+        # Check if user wants to book
+        wants_to_book = self.should_book(message)
+        
+        # If user wants to book and we have pricing, complete booking immediately
+        if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
         
         # Ask for missing required info first
@@ -221,6 +245,11 @@ class SkipAgent(BaseAgent):
         elif not state.get('service'):
             return "What service do you need?"
         
+        # If user wants to book but we don't have price yet, get price and complete booking
+        elif wants_to_book and not state.get('price'):
+            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
+            return self.get_pricing_and_complete_booking(state, conversation_id)
+        
         # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
@@ -230,6 +259,45 @@ class SkipAgent(BaseAgent):
             return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
         
         return "How can I help you with skip hire?"
+
+    def get_pricing_and_complete_booking(self, state, conversation_id):
+        """Get pricing and complete booking immediately"""
+        try:
+            from utils.wasteking_api import create_booking, get_pricing
+            
+            # Create booking
+            booking_result = create_booking()
+            if not booking_result.get('success'):
+                return "Unable to get pricing right now."
+            
+            booking_ref = booking_result['booking_ref']
+            skip_type = state.get('type', '8yd')
+            
+            # Get pricing
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], skip_type)
+            
+            if not price_result.get('success'):
+                return "Unable to get pricing for your area."
+            
+            price = price_result['price']
+            price_num = float(str(price).replace('£', '').replace(',', ''))
+            
+            if price_num > 0:
+                # Update state
+                state['price'] = price
+                state['type'] = price_result.get('type', skip_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+                
+                print("🚀 GOT PRICING - NOW COMPLETING BOOKING IMMEDIATELY")
+                # Complete booking immediately
+                return self.complete_booking_proper(state)
+            else:
+                return "Unable to get pricing for your area."
+                
+        except Exception as e:
+            print(f"❌ PRICING ERROR: {e}")
+            return "Unable to get pricing right now."
 
     def get_pricing_and_ask(self, state, conversation_id):
         """Get pricing and ask for booking"""
@@ -295,9 +363,12 @@ class MAVAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         """FIXED LOGIC"""
-        # If user says yes and we have pricing, complete booking
-        if self.should_book(message) and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER SAID YES - COMPLETING BOOKING")
+        # Check if user wants to book
+        wants_to_book = self.should_book(message)
+        
+        # If user wants to book and we have pricing, complete booking immediately
+        if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
         
         # Ask for missing required info first
@@ -310,6 +381,11 @@ class MAVAgent(BaseAgent):
         elif not state.get('service'):
             return "What service do you need?"
         
+        # If user wants to book but we don't have price yet, get price and complete booking
+        elif wants_to_book and not state.get('price'):
+            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
+            return self.get_pricing_and_complete_booking(state, conversation_id)
+        
         # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
@@ -319,6 +395,49 @@ class MAVAgent(BaseAgent):
             return f"💰 {state['type']} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
         
         return "How can I help you with man & van service?"
+
+    def get_pricing_and_complete_booking(self, state, conversation_id):
+        """Get pricing and complete booking immediately"""
+        try:
+            from utils.wasteking_api import create_booking, get_pricing
+            
+            # Create booking
+            booking_result = create_booking()
+            if not booking_result.get('success'):
+                return "Unable to get pricing right now."
+            
+            booking_ref = booking_result['booking_ref']
+            mav_type = state.get('type', 'small')
+            
+            # Get pricing
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], mav_type)
+            
+            if not price_result.get('success'):
+                return "Unable to get pricing for your area."
+            
+            price = price_result['price']
+            price_num = float(str(price).replace('£', '').replace(',', ''))
+            
+            if price_num > 0:
+                # Update state
+                state['price'] = price
+                state['type'] = price_result.get('type', mav_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+                
+                # Check if needs transfer - ONLY check business hours here
+                if self.needs_transfer(price_num):
+                    return f"For this £{price_num} booking, I need to transfer you to our specialist team who can help you complete this."
+                
+                print("🚀 GOT PRICING - NOW COMPLETING BOOKING IMMEDIATELY")
+                # Complete booking immediately
+                return self.complete_booking_proper(state)
+            else:
+                return "Unable to get pricing for your area."
+                
+        except Exception as e:
+            print(f"❌ PRICING ERROR: {e}")
+            return "Unable to get pricing right now."
 
     def get_pricing_and_ask(self, state, conversation_id):
         """Get pricing and check transfer rules"""
@@ -389,9 +508,12 @@ class GrabAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         """FIXED LOGIC"""
-        # If user says yes and we have pricing, complete booking
-        if self.should_book(message) and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER SAID YES - COMPLETING BOOKING")
+        # Check if user wants to book
+        wants_to_book = self.should_book(message)
+        
+        # If user wants to book and we have pricing, complete booking immediately
+        if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
         
         # Ask for missing required info first
@@ -404,6 +526,11 @@ class GrabAgent(BaseAgent):
         elif not state.get('service'):
             return "What service do you need?"
         
+        # If user wants to book but we don't have price yet, get price and complete booking
+        elif wants_to_book and not state.get('price'):
+            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
+            return self.get_pricing_and_complete_booking(state, conversation_id)
+        
         # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
@@ -413,6 +540,49 @@ class GrabAgent(BaseAgent):
             return f"💰 {state['type']} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
         
         return "How can I help you with grab hire?"
+
+    def get_pricing_and_complete_booking(self, state, conversation_id):
+        """Get pricing and complete booking immediately"""
+        try:
+            from utils.wasteking_api import create_booking, get_pricing
+            
+            # Create booking
+            booking_result = create_booking()
+            if not booking_result.get('success'):
+                return "Unable to get pricing right now."
+            
+            booking_ref = booking_result['booking_ref']
+            grab_type = state.get('type', '6t')
+            
+            # Get pricing
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], grab_type)
+            
+            if not price_result.get('success'):
+                return "Unable to get pricing for your area."
+            
+            price = price_result['price']
+            price_num = float(str(price).replace('£', '').replace(',', ''))
+            
+            if price_num > 0:
+                # Update state
+                state['price'] = price
+                state['type'] = price_result.get('type', grab_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+                
+                # Check if needs transfer - ONLY check business hours here
+                if self.needs_transfer(price_num):
+                    return f"For this £{price_num} booking, I need to transfer you to our specialist team who can help you complete this."
+                
+                print("🚀 GOT PRICING - NOW COMPLETING BOOKING IMMEDIATELY")
+                # Complete booking immediately
+                return self.complete_booking_proper(state)
+            else:
+                return "Unable to get pricing for your area."
+                
+        except Exception as e:
+            print(f"❌ PRICING ERROR: {e}")
+            return "Unable to get pricing right now."
 
     def get_pricing_and_ask(self, state, conversation_id):
         """Get pricing and check transfer rules"""
