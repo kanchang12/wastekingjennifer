@@ -119,7 +119,7 @@ def chatbot_api():
     return jsonify({'response': response_text})
 
 
-@app.route('/api/wasteking', methods=['POST'])
+@app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
     """Main endpoint for processing customer messages"""
     try:
