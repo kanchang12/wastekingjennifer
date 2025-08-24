@@ -104,6 +104,44 @@ class BaseAgent:
         
         return booking_intent and has_price
     
+    def send_forward_notification(self, manager_phone, state, service_type, price):
+        """Send SMS notification to manager when forwarding"""
+        try:
+            twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
+            twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
+            twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
+            
+            if twilio_sid and twilio_token and twilio_phone:
+                try:
+                    from twilio.rest import Client
+                    client = Client(twilio_sid, twilio_token)
+                    
+                    customer_name = state.get('firstName', 'Customer')
+                    customer_phone = state.get('phone', 'Unknown')
+                    postcode = state.get('postcode', 'Unknown')
+                    
+                    message = f"FORWARD: {service_type} booking £{price} for {customer_name} ({customer_phone}) at {postcode}. Customer waiting for callback."
+                    
+                    client.messages.create(
+                        body=message,
+                        from_=twilio_phone,
+                        to=manager_phone
+                    )
+                    
+                    print(f"✅ Forward notification sent to {manager_phone}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"❌ Forward notification failed: {e}")
+                    return False
+            else:
+                print("❌ Twilio not configured for forward notifications")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Forward notification error: {e}")
+            return False
+    
     def send_sms(self, name, phone, booking_ref, price, payment_link):
         """Send SMS with payment link"""
         try:
@@ -207,13 +245,14 @@ class SkipAgent(BaseAgent):
         return data
     
     def get_next_response(self, message, state, conversation_id):
-        """Get next response for skip hire - ALWAYS MAKE THE SALE"""
+        """Get next response for skip hire - SKIP ALWAYS BOOKS"""
         
-        # ALWAYS proceed with booking if customer wants it
+        # SKIP RULE: ALWAYS BOOK REGARDLESS OF TIME/PRICE/DAY - NEVER FORWARD
         if self.should_book(message, state) and self.has_required_data(state):
+            print(f"🚀 SKIP: ALWAYS BOOK - No limits, no forwards, no transfers!")
             return self.complete_booking(state)
         
-        # ALWAYS get price if requested
+        # Continue with normal flow
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
         
@@ -313,7 +352,7 @@ class MAVAgent(BaseAgent):
         if any(word in message_lower for word in ['man and van', 'mav', 'van']):
             data['service'] = 'mav'
             
-            # Extract van size in YARDS like you showed me
+            # Extract van size in YARDS
             if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
                 data['type'] = '8yd'
             elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
@@ -328,22 +367,39 @@ class MAVAgent(BaseAgent):
         return data
     
     def get_next_response(self, message, state, conversation_id):
-        """Get next response for man and van"""
+        """Get next response for man and van - TWO SITUATION CHECK"""
         
-        # Check office hours for transfer threshold
-        if is_business_hours() and state.get('price'):
-            try:
-                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-                if price_num >= 500:  # MAV transfer threshold
-                    return "Let me connect you with our specialist team for this quote."
-            except:
-                pass
-        
-        # Check if should book
+        # Check if should book first
         if self.should_book(message, state) and self.has_required_data(state):
-            return self.complete_booking(state)
+            
+            # Get price for threshold check
+            price_num = None
+            if state.get('price'):
+                try:
+                    price_num = float(str(state['price']).replace('£', '').replace(',', ''))
+                except:
+                    pass
+            
+            rules_check = self.rules.check_office_hours_and_transfer_rules(message, "mav", price_num)
+            print(f"📋 MAV RULES CHECK: {rules_check}")
+            
+            # SITUATION 1: OUT OF OFFICE HOURS - ALWAYS BOOK
+            if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
+                print("🌙 MAV OUT OF HOURS: Making the sale")
+                return self.complete_booking(state)
+            
+            # SITUATION 2: OFFICE HOURS - Check £500+ threshold
+            elif rules_check["situation"] == "OFFICE_HOURS":
+                if rules_check["transfer_allowed"]:
+                    print(f"📞 MAV OFFICE HOURS: Price £{price_num} ≥ £500 - FORWARDING + SMS")
+                    # Send SMS notification to +447823656762
+                    self.send_forward_notification("+447823656762", state, "MAV", price_num)
+                    return "Let me connect you with our specialist team for this quote."
+                else:
+                    print("✅ MAV OFFICE HOURS: Price under £500 - Making the sale")
+                    return self.complete_booking(state)
         
-        # Check if should get price  
+        # Continue with normal flow
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
         
@@ -430,22 +486,39 @@ class GrabAgent(BaseAgent):
         return data
     
     def get_next_response(self, message, state, conversation_id):
-        """Get next response for grab hire"""
+        """Get next response for grab hire - TWO SITUATION CHECK"""
         
-        # Check office hours for transfer threshold
-        if is_business_hours() and state.get('price'):
-            try:
-                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-                if price_num >= 300:  # Grab transfer threshold
-                    return "Let me connect you with our specialist team for this service."
-            except:
-                pass
-        
-        # Check if should book
+        # Check if should book first
         if self.should_book(message, state) and self.has_required_data(state):
-            return self.complete_booking(state)
+            
+            # Get price for threshold check
+            price_num = None
+            if state.get('price'):
+                try:
+                    price_num = float(str(state['price']).replace('£', '').replace(',', ''))
+                except:
+                    pass
+            
+            rules_check = self.rules.check_office_hours_and_transfer_rules(message, "grab", price_num)
+            print(f"📋 GRAB RULES CHECK: {rules_check}")
+            
+            # SITUATION 1: OUT OF OFFICE HOURS - ALWAYS BOOK
+            if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
+                print("🌙 GRAB OUT OF HOURS: Making the sale")
+                return self.complete_booking(state)
+            
+            # SITUATION 2: OFFICE HOURS - Check £300+ threshold
+            elif rules_check["situation"] == "OFFICE_HOURS":
+                if rules_check["transfer_allowed"]:
+                    print(f"📞 GRAB OFFICE HOURS: Price £{price_num} ≥ £300 - FORWARDING + SMS")
+                    # Send SMS notification to +447823656762
+                    self.send_forward_notification("+447823656762", state, "GRAB", price_num)
+                    return "Let me connect you with our specialist team for this service."
+                else:
+                    print("✅ GRAB OFFICE HOURS: Price under £300 - Making the sale")
+                    return self.complete_booking(state)
         
-        # Check if should get price  
+        # Continue with normal flow
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
         
