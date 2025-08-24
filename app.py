@@ -100,10 +100,24 @@ def index():
         ]
     })
 
-@app.route('/wasteking-chatbot.js', methods=['POST', 'GET'])
+@app.route('/wasteking-chatbot.js')
 def serve_chatbot_js():
-    # Assumes wasteking-chatbot.js is in ./static/
     return send_from_directory('static', 'wasteking-chatbot.js')
+
+
+from flask import request, jsonify
+
+@app.route('/api/chat', methods=['POST'])
+def chatbot_api():
+    data = request.get_json()
+    message = data.get('message')
+    conversation_id = data.get('conversation_id')
+
+    # Process the message, e.g., call AI or return canned response
+    response_text = f"You said: {message}"
+
+    return jsonify({'response': response_text})
+
 
 @app.route('/api/wasteking', methods=['POST'])
 def process_message():
