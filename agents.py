@@ -150,17 +150,26 @@ class SkipAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        if self.has_required_data(state) and state.get('price'):
-            if self.should_book(message):
-                return self.complete_booking(state)
-            elif message.lower() in ['no', 'n']:
-                return "No worries! Can I ask why you’re not booking today?"
-            else:
-                return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
-
+        """Get next response for skip hire"""
+    
+        # Check if user wants to book
+        if self.should_book(message, state) and self.has_required_data(state):
+            # Price must exist before booking
+            if not state.get('price') or not state.get('booking_ref'):
+                return self.get_pricing(state, conversation_id)
+    
+            # User said yes, complete booking
+            return self.complete_booking(state)
+    
+        # If user explicitly says no
+        if any(word in message.lower() for word in ['no', 'n']):
+            return "No worries! Can I ask why you’re not booking today?"
+    
+        # If user wants a price quote
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
-
+    
+        # Ask for missing info
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -171,6 +180,7 @@ class SkipAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
+
 
     def get_pricing(self, state, conversation_id):
         try:
@@ -214,34 +224,26 @@ class MAVAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        price_num = None
-        if state.get('price'):
-            try:
-                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-            except:
-                price_num = 0
-
-        if state.get('price'):
-            if self.should_book(message):
-                rules_check = self.rules.check_office_hours_and_transfer_rules(message, "mav", price_num)
-                print(f"📋 MAV RULES CHECK: {rules_check}")
-
-                if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
-                    return self.complete_booking(state)
-                elif rules_check["situation"] == "OFFICE_HOURS":
-                    if rules_check["transfer_allowed"]:
-                        self.send_forward_notification("+447823656762", state, "MAV", price_num)
-                        return "Let me connect you with our specialist team for this quote."
-                    else:
-                        return self.complete_booking(state)
-            elif message.lower() in ['no', 'n']:
-                return "No worries! Can I ask why you’re not booking today?"
-            else:
-                return f"💰 {state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
-
+        """Get next response for skip hire"""
+    
+        # Check if user wants to book
+        if self.should_book(message, state) and self.has_required_data(state):
+            # Price must exist before booking
+            if not state.get('price') or not state.get('booking_ref'):
+                return self.get_pricing(state, conversation_id)
+    
+            # User said yes, complete booking
+            return self.complete_booking(state)
+    
+        # If user explicitly says no
+        if any(word in message.lower() for word in ['no', 'n']):
+            return "No worries! Can I ask why you’re not booking today?"
+    
+        # If user wants a price quote
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
-
+    
+        # Ask for missing info
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -252,6 +254,7 @@ class MAVAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
+
 
     def get_pricing(self, state, conversation_id):
         try:
@@ -301,34 +304,26 @@ class GrabAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        price_num = None
-        if state.get('price'):
-            try:
-                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-            except:
-                price_num = 0
-
-        if state.get('price'):
-            if self.should_book(message):
-                rules_check = self.rules.check_office_hours_and_transfer_rules(message, "grab", price_num)
-                print(f"📋 GRAB RULES CHECK: {rules_check}")
-
-                if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
-                    return self.complete_booking(state)
-                elif rules_check["situation"] == "OFFICE_HOURS":
-                    if rules_check["transfer_allowed"]:
-                        self.send_forward_notification("+447823656762", state, "GRAB", price_num)
-                        return "Let me connect you with our specialist team for this service."
-                    else:
-                        return self.complete_booking(state)
-            elif message.lower() in ['no', 'n']:
-                return "No worries! Can I ask why you’re not booking today?"
-            else:
-                return f"💰 {state.get('type', '6t')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
-
+        """Get next response for skip hire"""
+    
+        # Check if user wants to book
+        if self.should_book(message, state) and self.has_required_data(state):
+            # Price must exist before booking
+            if not state.get('price') or not state.get('booking_ref'):
+                return self.get_pricing(state, conversation_id)
+    
+            # User said yes, complete booking
+            return self.complete_booking(state)
+    
+        # If user explicitly says no
+        if any(word in message.lower() for word in ['no', 'n']):
+            return "No worries! Can I ask why you’re not booking today?"
+    
+        # If user wants a price quote
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
-
+    
+        # Ask for missing info
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -339,6 +334,7 @@ class GrabAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
+
 
     def get_pricing(self, state, conversation_id):
         try:
