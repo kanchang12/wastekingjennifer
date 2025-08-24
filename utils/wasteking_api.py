@@ -50,9 +50,9 @@ def create_booking():
         return {"success": True, "booking_ref": booking_ref}
     return result
 
-def get_pricing(booking_ref, postcode, service):
-    """Step 2: Get pricing with booking ref"""
-    print(f"💰 STEP 2: Getting price for {service} at {postcode}...")
+def get_pricing(booking_ref, postcode, service, skip_type="8yd"):
+    """Step 2: Get pricing with booking ref - Extract REAL prices from API for specific postcode"""
+    print(f"💰 STEP 2: Getting price for {service} {skip_type} at {postcode}...")
     payload = {
         "bookingRef": booking_ref,
         "search": {
@@ -63,10 +63,34 @@ def get_pricing(booking_ref, postcode, service):
     result = wasteking_request("api/booking/update", payload)
     
     if result.get('success'):
-        price = result.get('price') or result.get('totalPrice') or result.get('cost')
-        print(f"✅ PRICE: £{price}")
-        return {"success": True, "price": price}
-    return result
+        # Extract price from resultItems array for THIS specific postcode
+        result_items = result.get('resultItems', [])
+        
+        print(f"🔍 API returned {len(result_items)} price options for {postcode}:")
+        for item in result_items:
+            print(f"   {item.get('type')}: {item.get('price')}")
+        
+        # Find the exact skip type requested
+        for item in result_items:
+            if item.get('type') == skip_type:
+                price = item.get('price')
+                if price and price != 'call' and price != '£0.00':
+                    print(f"✅ FOUND {skip_type} for {postcode}: {price}")
+                    return {"success": True, "price": price, "type": skip_type}
+        
+        # If exact type not available, get first available priced item
+        for item in result_items:
+            price = item.get('price')
+            item_type = item.get('type')
+            if price and price != 'call' and price != '£0.00':
+                print(f"✅ FOUND {item_type} for {postcode}: {price}")
+                return {"success": True, "price": price, "type": item_type}
+        
+        print(f"❌ No fixed prices available for {postcode} - all require phone quote")
+        return {"success": False, "error": f"No fixed prices for {postcode}"}
+    
+    print(f"❌ API failed for {postcode}")
+    return {"success": False, "error": "API call failed"}
 
 def update_booking_details(booking_ref, customer_data):
     """Step 3: Update booking with customer details"""
