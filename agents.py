@@ -77,8 +77,11 @@ class BaseAgent:
         data = {}
         message_lower = message.lower()
 
-        # Extract postcode
+        # Extract postcode - FIXED REGEX
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
+        if not postcode_match:
+            # Try partial postcode like "M11 AB"
+            postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}\s*[A-Z]{1,2})', message.upper())
         if postcode_match:
             data['postcode'] = postcode_match.group(1).replace(' ', '')
             print(f"✅ Extracted postcode: {data['postcode']}")
@@ -109,7 +112,7 @@ class BaseAgent:
         return data
 
     def should_book(self, message):
-        """Check if user wants to proceed with booking - CONSISTENT LOGIC"""
+        """Check if user wants to proceed with booking"""
         message_lower = message.lower()
         
         # Direct booking requests
@@ -123,23 +126,15 @@ class BaseAgent:
             'perfect', 'sounds good', 'thats fine', 'arrange this'
         ]
         
-        # Simple positive responses - CONSISTENT CHECK
-        positive_words = [
-            'yes', 'yeah', 'yep', 'yup', 'y', 
-            'ok', 'okay', 'k', 'alright', 'sure', 
-            'lets do it', 'go ahead', 'proceed',
-            'confirm', 'accept', 'agree'
-        ]
+        # Positive responses
+        positive_words = ['yes', 'yeah', 'yep', 'ok', 'okay', 'alright', 'sure', 'lets do it', 'go ahead', 'proceed']
         
-        # Check for explicit booking requests first
+        # Check for explicit booking requests
         if any(phrase in message_lower for phrase in booking_phrases):
             return True
             
-        # Then check for simple positive responses
-        if any(word in message_lower for word in positive_words):
-            return True
-            
-        return False
+        # Check for positive responses
+        return any(word in message_lower for word in positive_words)
 
     def should_get_price(self, message):
         """Check if user wants pricing"""
@@ -153,24 +148,21 @@ class BaseAgent:
         )
 
     def needs_transfer(self, price):
-        """Check transfer rules - BUT FIRST check if office is open"""
-        # FIRST: Check if office is open
-        office_check = self.rules_processor.check_office_hours_and_transfer_rules(
-            message="", agent_type=self.service_type, price=price
-        )
+        """Check transfer rules - OFFICE HOURS CHECK FIRST"""
+        transfer_check = self.check_office_hours_and_transfer(price)
         
         # If office is CLOSED - never transfer, make the sale
-        if office_check.get('situation') == 'OUT_OF_OFFICE_HOURS':
+        if transfer_check.get('situation') == 'OUT_OF_OFFICE_HOURS':
             print("🌙 OFFICE CLOSED - MAKE THE SALE")
             return False
         
         # If office is OPEN - then check normal transfer rules
-        if office_check.get('situation') == 'OFFICE_HOURS':
-            if office_check.get('transfer_allowed'):
-                print(f"🏢 OFFICE OPEN + TRANSFER NEEDED: {office_check.get('reason')}")
+        if transfer_check.get('situation') == 'OFFICE_HOURS':
+            if transfer_check.get('transfer_allowed'):
+                print(f"🏢 OFFICE OPEN + TRANSFER NEEDED: {transfer_check.get('reason')}")
                 return True
             else:
-                print(f"🏢 OFFICE OPEN + NO TRANSFER: {office_check.get('reason')}")
+                print(f"🏢 OFFICE OPEN + NO TRANSFER: {transfer_check.get('reason')}")
                 return False
                 
         return False
@@ -432,13 +424,13 @@ class SkipAgent(BaseAgent):
             if any(material in message_lower for material in ['soil', 'rubble', 'concrete', 'heavy']):
                 data['heavy_materials'] = True
                 data['type'] = '8yd'  # Heavy materials MAX 8-yard
-            elif any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
+            elif any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard']):
                 data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd', 'six yard']):
                 data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd', 'four yard']):
                 data['type'] = '4yd'
-            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']):
+            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd', 'twelve yard']):
                 data['type'] = '12yd'
             else:
                 data['type'] = '8yd'  # Default
@@ -450,16 +442,16 @@ class SkipAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        """RULES-COMPLIANT LOGIC - CONSISTENT FLOW"""
+        """RULES-COMPLIANT LOGIC"""
         # LOCK_11: Answer customer questions FIRST
         if any(prohibited in message.lower() for prohibited in ['sofa', 'upholstered']):
             # Use exact script for prohibited items
             return self.get_exact_script('sofa_prohibited')
         
-        # Check if user wants to book - CONSISTENT CHECK
+        # Check if user wants to book
         wants_to_book = self.should_book(message)
         
-        # LOCK_4 + LOCK_8: Don't re-ask for stored information - CONSISTENT ORDER
+        # LOCK_4 + LOCK_8: Don't re-ask for stored information
         missing_field = self.enforce_lock_rules(message, state)
         
         if missing_field == 'firstName':
@@ -471,11 +463,11 @@ class SkipAgent(BaseAgent):
         elif missing_field == 'service':
             return "What service do you need?"
         
-        # CONSISTENT BOOKING FLOW
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             response = self.complete_booking_proper(state)
+            # Validate response compliance
             self.validate_response_compliance(response)
             return response
         
@@ -486,7 +478,7 @@ class SkipAgent(BaseAgent):
             self.validate_response_compliance(response)
             return response
         
-        # Check for heavy materials rule - SKIP SPECIFIC
+        # Check for heavy materials rule
         if state.get('heavy_materials'):
             response = self.get_exact_script('heavy_materials')
             if not response:
@@ -522,23 +514,22 @@ class MAVAgent(BaseAgent):
         data = super().extract_data(message)
         message_lower = message.lower()
         
-        # CONSISTENT SERVICE DETECTION
-        if any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'man van']):
+        if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
             data['service'] = 'mav'
             
             # Size detection - ALWAYS IN YARDS
-            if any(size in message_lower for size in ['large', '12-yard', '12 yard', '12yd']):
+            if any(size in message_lower for size in ['large', '12-yard', '12 yard', '12yd', 'twelve yard']):
                 data['type'] = '12yd'
-            elif any(size in message_lower for size in ['medium', '8-yard', '8 yard', '8yd']):
+            elif any(size in message_lower for size in ['medium', '8-yard', '8 yard', '8yd', 'eight yard']):
                 data['type'] = '8yd'
-            elif any(size in message_lower for size in ['small', '6-yard', '6 yard', '6yd']):
+            elif any(size in message_lower for size in ['small', '6-yard', '6 yard', '6yd', 'six yard']):
                 data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd', 'four yard']):
                 data['type'] = '4yd'
             else:
                 data['type'] = '6yd'  # Default
             
-            # Transfer triggers - BUT ONLY FLAG THEM, DON'T ACT ON THEM YET
+            # PDF rule-based transfer triggers
             if any(material in message_lower for material in ['soil', 'rubble', 'concrete', 'heavy']):
                 data['heavy_materials'] = True
             if any(access in message_lower for access in ['stairs', 'flat', 'apartment', 'floor']):
@@ -547,11 +538,19 @@ class MAVAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        """Simple MAV logic - CONSISTENT FLOW"""
-        # Check if user wants to book - CONSISTENT CHECK
+        """HARDCODED logic + PDF transfer rules"""
+        # PDF rules: Immediate transfer requirements during office hours
+        transfer_check = self.check_office_hours_and_transfer()
+        
+        if state.get('heavy_materials') and transfer_check.get('is_office_hours'):
+            return "Heavy materials require our specialist team. Let me transfer you to them now."
+        elif state.get('difficult_access') and transfer_check.get('is_office_hours'):
+            return "For stairs and difficult access, our specialist team can help you better. Let me transfer you."
+        
+        # Hardcoded booking flow
         wants_to_book = self.should_book(message)
         
-        # COLLECT CUSTOMER INFO FIRST - CONSISTENT ORDER
+        # PDF LOCK rules for missing data
         missing_field = self.enforce_lock_rules(message, state)
         
         if missing_field == 'firstName':
@@ -563,26 +562,22 @@ class MAVAgent(BaseAgent):
         elif missing_field == 'service':
             return "What service do you need?"
         
-        # CONSISTENT BOOKING FLOW
-        # If user wants to book and we have pricing, complete booking immediately
+        # Hardcoded booking completion
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             response = self.complete_booking_proper(state)
-            self.validate_response_compliance(response)
+            self.validate_pdf_compliance(response)
             return response
         
-        # If user wants to book but no price yet, get price and book
         elif wants_to_book and not state.get('price'):
             print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
             response = self.get_pricing_and_complete_booking(state, conversation_id)
-            self.validate_response_compliance(response)
+            self.validate_pdf_compliance(response)
             return response
         
-        # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
         
-        # If we have pricing, ask to book (transfer check happens in needs_transfer)
         elif state.get('price'):
             return f"💰 {state['type']} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
         
@@ -601,20 +596,19 @@ class GrabAgent(BaseAgent):
         data = super().extract_data(message)
         message_lower = message.lower()
         
-        # CONSISTENT SERVICE DETECTION
         if any(word in message_lower for word in ['grab', 'grab hire']):
             data['service'] = 'grab'
             
             # Size detection - ALWAYS IN YARDS
-            if any(size in message_lower for size in ['8-wheeler', '8 wheel', '16-tonne', '8-tonne', '12-yard', '12 yard', '12yd']):
+            if any(size in message_lower for size in ['8-wheeler', '8 wheel', '16-tonne', '8-tonne', '12-yard', '12 yard', '12yd', 'twelve yard']):
                 data['type'] = '12yd'
                 data['script_used'] = 'grab_8_wheeler'
-            elif any(size in message_lower for size in ['6-wheeler', '6 wheel', '12-tonne', '6-tonne', '8-yard', '8 yard', '8yd']):
+            elif any(size in message_lower for size in ['6-wheeler', '6 wheel', '12-tonne', '6-tonne', '8-yard', '8 yard', '8yd', 'eight yard']):
                 data['type'] = '8yd'
                 data['script_used'] = 'grab_6_wheeler'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd', 'six yard']):
                 data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd', 'four yard']):
                 data['type'] = '4yd'
             else:
                 data['type'] = '6yd'  # Default
@@ -623,7 +617,7 @@ class GrabAgent(BaseAgent):
             data['service'] = 'grab'
             data['type'] = '6yd'
             
-        # Transfer triggers - BUT ONLY FLAG THEM, DON'T ACT ON THEM YET
+        # PDF rule-based immediate transfer triggers
         if any(mixed in message_lower for mixed in ['mixed materials', 'various', 'different types']):
             data['mixed_materials'] = True
         
@@ -633,8 +627,16 @@ class GrabAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        """GRAB logic - CONSISTENT FLOW"""
-        # PDF exact scripts for terminology - GRAB SPECIFIC
+        """HARDCODED logic + PDF immediate transfer rules"""
+        # PDF rules: IMMEDIATE TRANSFERS (during office hours)
+        transfer_check = self.check_office_hours_and_transfer()
+        
+        if state.get('mixed_materials') and transfer_check.get('is_office_hours'):
+            return "Mixed materials require our specialist team. Let me transfer you immediately."
+        elif state.get('wait_and_load'):
+            return "Wait & load skip service requires immediate transfer to our specialist team."
+        
+        # PDF exact scripts for terminology
         if state.get('script_used') == 'grab_8_wheeler':
             script = self.get_exact_script('grab_8_wheeler')
             if script:
@@ -644,10 +646,10 @@ class GrabAgent(BaseAgent):
             if script:
                 return script
         
-        # Check if user wants to book - CONSISTENT CHECK
+        # Hardcoded booking flow
         wants_to_book = self.should_book(message)
         
-        # COLLECT CUSTOMER INFO FIRST - CONSISTENT ORDER
+        # PDF LOCK rules for missing data
         missing_field = self.enforce_lock_rules(message, state)
         
         if missing_field == 'firstName':
@@ -659,26 +661,22 @@ class GrabAgent(BaseAgent):
         elif missing_field == 'service':
             return "What service do you need?"
         
-        # CONSISTENT BOOKING FLOW
-        # If user wants to book and we have pricing, complete booking immediately
+        # Hardcoded booking completion
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             response = self.complete_booking_proper(state)
-            self.validate_response_compliance(response)
+            self.validate_pdf_compliance(response)
             return response
         
-        # If user wants to book but no price yet, get price and book
         elif wants_to_book and not state.get('price'):
             print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
             response = self.get_pricing_and_complete_booking(state, conversation_id)
-            self.validate_response_compliance(response)
+            self.validate_pdf_compliance(response)
             return response
         
-        # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
         
-        # If we have pricing, ask to book (transfer check happens in needs_transfer)
         elif state.get('price'):
             return f"💰 {state['type']} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
         
