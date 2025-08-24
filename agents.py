@@ -1,62 +1,7 @@
-def complete_booking(self, state):
-        """Complete booking process and send SMS"""
-        try:
-            result = complete_booking(state)
-            if result.get('success'):
-                booking_ref = result['booking_ref']
-                price = result['price']
-                payment_link = result.get('payment_link')
-                
-                response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
-                
-                if payment_link:
-                    response += f". Payment link: {payment_link}"
-                    
-                    # Send SMS if we have phone number
-                    phone = state.get('phone')
-                    if phone:
-                        sms_sent = self.send_sms(state['firstName'], phone, booking_ref, price, payment_link)
-                        if sms_sent:
-                            response += f" Payment link sent to {phone} via SMS."
-                        else:
-                            response += f" Please save the payment link above."
-                else:
-                    response += " Payment processing in progress."
-                
-                return response
-            else:
-                return "Unable to complete booking. Our team will call you back."
-        except Exception as e:
-            print(f"❌ Booking error: {e}")
-            return "Booking issue. Our team will contact you shortly."
-    
-    def send_sms(self, name, phone, booking_ref, price, payment_link):
-        """Send SMS with payment link"""
-        try:
-            import os
-            import requests
-            
-            # Try Twilio if configured
-            twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
-            twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
-            twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
-            
-            if twilio_sid and twilio_token and twilio_phone:
-                try:
-                    from twilio.rest import Client
-                    client = Client(twilio_sid, twilio_token)
-                    
-                    message = f"Hi {name}, your skip booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
-                    
-                    client.messages.create(
-                        body=message,
-                        from_=twilio_phone,
-                        to=f"+44{phone[1:]}" if phone.startswith('0') else phone
-                    )
-                    
-                    print(f"✅ SMS sent to {phone}")
-                    returnimport re
+import re
 import json
+import os
+import requests
 from datetime import datetime
 from utils.wasteking_api import complete_booking, is_business_hours
 
@@ -158,6 +103,79 @@ class BaseAgent:
         print(f"🔍 Booking intent check: {booking_intent}, Has price: {has_price}")
         
         return booking_intent and has_price
+    
+    def send_sms(self, name, phone, booking_ref, price, payment_link):
+        """Send SMS with payment link"""
+        try:
+            # Try Twilio if configured
+            twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
+            twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
+            twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
+            
+            if twilio_sid and twilio_token and twilio_phone:
+                try:
+                    from twilio.rest import Client
+                    client = Client(twilio_sid, twilio_token)
+                    
+                    message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
+                    
+                    # Format phone number for UK
+                    formatted_phone = f"+44{phone[1:]}" if phone.startswith('0') else phone
+                    if not formatted_phone.startswith('+'):
+                        formatted_phone = f"+44{formatted_phone}"
+                    
+                    client.messages.create(
+                        body=message,
+                        from_=twilio_phone,
+                        to=formatted_phone
+                    )
+                    
+                    print(f"✅ SMS sent to {phone}")
+                    return True
+                    
+                except Exception as twilio_error:
+                    print(f"❌ Twilio SMS failed: {twilio_error}")
+                    return False
+            else:
+                print("❌ Twilio credentials not configured")
+                return False
+                
+        except Exception as e:
+            print(f"❌ SMS error: {e}")
+            return False
+    
+    def complete_booking(self, state):
+        """Complete booking process and send SMS"""
+        try:
+            result = complete_booking(state)
+            if result.get('success'):
+                booking_ref = result['booking_ref']
+                price = result['price']
+                payment_link = result.get('payment_link')
+                
+                response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
+                
+                if payment_link:
+                    response += f". Payment link: {payment_link}"
+                    
+                    # Send SMS if we have phone number
+                    phone = state.get('phone')
+                    if phone:
+                        sms_sent = self.send_sms(state['firstName'], phone, booking_ref, price, payment_link)
+                        if sms_sent:
+                            response += f" Payment link sent to {phone} via SMS."
+                        else:
+                            response += f" Please save the payment link above."
+                else:
+                    response += " Payment processing in progress."
+                
+                return response
+            else:
+                return "Unable to complete booking. Our team will call you back."
+        except Exception as e:
+            print(f"❌ Booking error: {e}")
+            return "Booking issue. Our team will contact you shortly."
+
 
 class SkipAgent(BaseAgent):
     def __init__(self, rules_processor):
@@ -274,6 +292,7 @@ class SkipAgent(BaseAgent):
             print(f"❌ Booking error: {e}")
             return "Booking failed. Our team will contact you shortly."
 
+
 class MAVAgent(BaseAgent):
     def __init__(self, rules_processor):
         super().__init__(rules_processor)
@@ -367,6 +386,7 @@ class MAVAgent(BaseAgent):
                 return "Unable to complete booking. Our team will call you."
         except Exception as e:
             return "Booking issue. Our team will contact you."
+
 
 class GrabAgent(BaseAgent):
     def __init__(self, rules_processor):
