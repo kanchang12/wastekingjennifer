@@ -100,7 +100,7 @@ def index():
         ]
     })
 
-@app.route('/wasteking-chatbot.js')
+@app.route('/wasteking-chatbot.js', methods=['POST', 'GET'])
 def serve_chatbot_js():
     # Assumes wasteking-chatbot.js is in ./static/
     return send_from_directory('static', 'wasteking-chatbot.js')
