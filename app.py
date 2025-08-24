@@ -18,10 +18,19 @@ print("🚀 Initializing WasteKing Simple System...")
 rules_processor = RulesProcessor()
 print("📋 Rules processor loaded")
 
-# Initialize agents
+# Initialize agents with shared conversation storage
+shared_conversations = {}
+
 skip_agent = SkipAgent(rules_processor)
-mav_agent = MAVAgent(rules_processor)
+skip_agent.conversations = shared_conversations
+
+mav_agent = MAVAgent(rules_processor)  
+mav_agent.conversations = shared_conversations
+
 grab_agent = GrabAgent(rules_processor)
+grab_agent.conversations = shared_conversations
+
+print("✅ All agents initialized with shared conversation storage")
 
 print("✅ All agents initialized")
 print("🔧 Environment check:")
