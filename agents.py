@@ -191,6 +191,8 @@ class SkipAgent(BaseAgent):
                 return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
                 return "Unable to get pricing for your area."
+        except Exception as e:
+            print(e)
 
 
 
@@ -245,14 +247,20 @@ class MAVAgent(BaseAgent):
             booking_ref = booking_result['booking_ref']
             mav_type = state.get('type', '4yd')
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], mav_type)
-            price = price_result['price']
-            state['price'] = price
-            state['booking_ref'] = booking_ref
-            self.conversations[conversation_id] = state
-            return f"💰 {mav_type} man & van at {state['postcode']}: {price}. Would you like to book?"
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], skip_type)
+            price_num = float(str(price_result['price']).replace('£', '').replace(',', ''))
+            if price_num > 0:
+                state['price'] = price_result['price']
+                state['type'] = price_result.get('type', skip_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+        
+                # This line sends the message to the user
+                return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+            else:
+                return "Unable to get pricing for your area."
         except Exception as e:
-            print(f"❌ MAV Pricing error: {e}")
-            return "Let me get you a quote. What's your phone number?"
+            print(e)
 
     def complete_booking(self, state):
         try:
@@ -314,14 +322,20 @@ class GrabAgent(BaseAgent):
             booking_ref = booking_result['booking_ref']
             grab_type = state.get('type', '6t')
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], grab_type)
-            price = price_result['price']
-            state['price'] = price
-            state['booking_ref'] = booking_ref
-            self.conversations[conversation_id] = state
-            return f"💰 {grab_type} grab hire at {state['postcode']}: {price}. Would you like to book?"
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], skip_type)
+            price_num = float(str(price_result['price']).replace('£', '').replace(',', ''))
+            if price_num > 0:
+                state['price'] = price_result['price']
+                state['type'] = price_result.get('type', skip_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+        
+                # This line sends the message to the user
+                return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+            else:
+                return "Unable to get pricing for your area."
         except Exception as e:
-            print(f"❌ Grab Pricing error: {e}")
-            return "Let me get you a quote. What's your phone number?"
+            print(e)
 
     def complete_booking(self, state):
         try:
