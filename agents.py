@@ -145,20 +145,24 @@ class BaseAgent:
         )
 
     def needs_transfer(self, price):
-        """Check transfer rules using rules processor"""
-        transfer_check = self.check_office_hours_and_transfer(price)
+        """Check transfer rules - BUT FIRST check if office is open"""
+        # FIRST: Check if office is open
+        office_check = self.rules_processor.check_office_hours_and_transfer_rules(
+            message="", agent_type=self.service_type, price=price
+        )
         
-        if transfer_check.get('situation') == 'OUT_OF_OFFICE_HOURS':
-            lock_rule = self.get_cached_rule('lock_rules', 'LOCK_9_OUT_HOURS_CALLBACK')
-            print(f"🌙 {lock_rule or 'OUT OF HOURS - MAKE THE SALE'}")
+        # If office is CLOSED - never transfer, make the sale
+        if office_check.get('situation') == 'OUT_OF_OFFICE_HOURS':
+            print("🌙 OFFICE CLOSED - MAKE THE SALE")
             return False
-            
-        elif transfer_check.get('situation') == 'OFFICE_HOURS':
-            if transfer_check.get('transfer_allowed'):
-                print(f"🏢 TRANSFER NEEDED: {transfer_check.get('reason')}")
+        
+        # If office is OPEN - then check normal transfer rules
+        if office_check.get('situation') == 'OFFICE_HOURS':
+            if office_check.get('transfer_allowed'):
+                print(f"🏢 OFFICE OPEN + TRANSFER NEEDED: {office_check.get('reason')}")
                 return True
             else:
-                print(f"🏢 NO TRANSFER: {transfer_check.get('reason')}")
+                print(f"🏢 OFFICE OPEN + NO TRANSFER: {office_check.get('reason')}")
                 return False
                 
         return False
@@ -532,19 +536,11 @@ class MAVAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        """HARDCODED logic + PDF transfer rules"""
-        # PDF rules: Immediate transfer requirements during office hours
-        transfer_check = self.check_office_hours_and_transfer()
-        
-        if state.get('heavy_materials') and transfer_check.get('is_office_hours'):
-            return "Heavy materials require our specialist team. Let me transfer you to them now."
-        elif state.get('difficult_access') and transfer_check.get('is_office_hours'):
-            return "For stairs and difficult access, our specialist team can help you better. Let me transfer you."
-        
-        # Hardcoded booking flow
+        """Simple MAV logic - collect info FIRST, then check transfers"""
+        # Check if user wants to book
         wants_to_book = self.should_book(message)
         
-        # PDF LOCK rules for missing data
+        # COLLECT CUSTOMER INFO FIRST - don't do transfers on empty state!
         missing_field = self.enforce_lock_rules(message, state)
         
         if missing_field == 'firstName':
@@ -556,23 +552,26 @@ class MAVAgent(BaseAgent):
         elif missing_field == 'service':
             return "What service do you need?"
         
-        # Hardcoded booking completion
+        # Now we have customer info - check if they want to book
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             response = self.complete_booking_proper(state)
-            self.validate_pdf_compliance(response)
             return response
         
         elif wants_to_book and not state.get('price'):
             print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
             response = self.get_pricing_and_complete_booking(state, conversation_id)
-            self.validate_pdf_compliance(response)
             return response
         
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
         
         elif state.get('price'):
+            # ONLY NOW check if transfer needed (with actual price)
+            price_num = float(str(state['price']).replace('£', '').replace(',', ''))
+            if self.needs_transfer(price_num):
+                return f"For this £{price_num} booking, I need to transfer you to our specialist team."
+            
             return f"💰 {state['type']} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
         
         return "How can I help you with man & van service?"
