@@ -5,35 +5,41 @@ import requests
 from datetime import datetime
 from utils.wasteking_api import complete_booking, is_business_hours
 
+
 class BaseAgent:
     def __init__(self, rules_processor):
         self.rules = rules_processor
         self.conversations = {}  # Store conversation state
-    
+
     def process_message(self, message, conversation_id="default"):
-        """Process customer message and return response"""
         state = self.conversations.get(conversation_id, {})
         print(f"📂 LOADED STATE: {state}")
+
         new_data = self.extract_data(message)
         print(f"🔍 NEW DATA: {new_data}")
+
         state.update(new_data)
         print(f"🔄 MERGED STATE: {state}")
+
         self.conversations[conversation_id] = state
+
         response = self.get_next_response(message, state, conversation_id)
         return response
-    
+
     def extract_data(self, message):
-        """Extract customer data from message"""
         data = {}
         message_lower = message.lower()
+
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
         if postcode_match:
             data['postcode'] = postcode_match.group(1).replace(' ', '')
             print(f"✅ Extracted postcode: {data['postcode']}")
+
         phone_match = re.search(r'\b(\d{10,11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
             print(f"✅ Extracted phone: {data['phone']}")
+
         if 'kanchen' in message_lower:
             data['firstName'] = 'Kanchen'
             print(f"✅ Extracted name: Kanchen")
@@ -51,36 +57,27 @@ class BaseAgent:
                     print(f"✅ Extracted name: {data['firstName']}")
                     break
         return data
-    
+
     def has_required_data(self, state):
         required = ['firstName', 'phone', 'postcode', 'service']
         missing = [field for field in required if not state.get(field)]
         if missing:
             print(f"❌ MISSING REQUIRED DATA: {missing}")
             return False
-        print(f"✅ ALL REQUIRED DATA PRESENT: {[f'{k}:{v}' for k,v in state.items() if k in required]}")
         return True
-    
+
     def should_get_price(self, message, state):
         price_words = ['price', 'cost', 'quote', 'how much', 'availability']
         return any(word in message.lower() for word in price_words)
-    
-    def should_book(self, message, state):
-        book_words = [
-            'book', 'booking', 'yes', 'confirm', 'proceed', 'ok',
-            'payment link', 'booking link', 'send payment', 'send link',
-            'complete booking', 'finalize', 'go ahead', 'continue'
-        ]
-        has_price = state.get('price') is not None
-        message_lower = message.lower()
-        booking_intent = any(word in message_lower for word in book_words)
-        print(f"🔍 Booking intent check: {booking_intent}, Has price: {has_price}")
-        return booking_intent and has_price
-    
+
+    def should_book(self, message):
+        positive_words = ['yes', 'yeah', 'yep', 'ok', 'alright', 'sure', 'lets do it', 'go ahead']
+        return any(word in message.lower() for word in positive_words)
+
     def send_forward_notification(self, manager_phone, state, service_type, price):
         try:
             twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
-            twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
+            twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
             twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
             if twilio_sid and twilio_token and twilio_phone:
                 from twilio.rest import Client
@@ -91,36 +88,24 @@ class BaseAgent:
                 message = f"FORWARD: {service_type} booking £{price} for {customer_name} ({customer_phone}) at {postcode}. Customer waiting for callback."
                 client.messages.create(body=message, from_=twilio_phone, to=manager_phone)
                 print(f"✅ Forward notification sent to {manager_phone}")
-                return True
-            else:
-                print("❌ Twilio not configured for forward notifications")
-                return False
         except Exception as e:
             print(f"❌ Forward notification error: {e}")
-            return False
-    
+
     def send_sms(self, name, phone, booking_ref, price, payment_link):
         try:
             twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
-            twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
+            twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
             twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
             if twilio_sid and twilio_token and twilio_phone:
                 from twilio.rest import Client
                 client = Client(twilio_sid, twilio_token)
-                message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
                 formatted_phone = f"+44{phone[1:]}" if phone.startswith('0') else phone
-                if not formatted_phone.startswith('+'):
-                    formatted_phone = f"+44{formatted_phone}"
+                message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
                 client.messages.create(body=message, from_=twilio_phone, to=formatted_phone)
                 print(f"✅ SMS sent to {phone}")
-                return True
-            else:
-                print("❌ Twilio credentials not configured")
-                return False
         except Exception as e:
             print(f"❌ SMS error: {e}")
-            return False
-    
+
     def complete_booking(self, state):
         try:
             result = complete_booking(state)
@@ -131,28 +116,22 @@ class BaseAgent:
                 response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
                 if payment_link:
                     response += f". Payment link: {payment_link}"
-                    phone = state.get('phone')
-                    if phone:
-                        sms_sent = self.send_sms(state['firstName'], phone, booking_ref, price, payment_link)
-                        if sms_sent:
-                            response += f" Payment link sent to {phone} via SMS."
-                        else:
-                            response += " Please save the payment link above."
-                else:
-                    response += " Payment processing in progress."
+                    if state.get('phone'):
+                        self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
+                state['booking_completed'] = True
                 return response
             else:
                 return "Unable to complete booking. Our team will call you back."
         except Exception as e:
             print(f"❌ Booking error: {e}")
-            return "Booking issue. Our team will contact you shortly."
+            return "Booking issue. Our team will contact you."
 
-# ---------------- SkipAgent ----------------
+
 class SkipAgent(BaseAgent):
     def __init__(self, rules_processor):
         super().__init__(rules_processor)
         self.service_type = 'skip'
-    
+
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
@@ -168,17 +147,20 @@ class SkipAgent(BaseAgent):
                 data['type'] = '12yd'
             else:
                 data['type'] = '8yd'
-            print(f"✅ Skip service detected: {data['type']}")
         return data
-    
+
     def get_next_response(self, message, state, conversation_id):
-        if state.get('price'):
-            if message.lower() in ['yes', 'y']:
+        if self.has_required_data(state) and state.get('price'):
+            if self.should_book(message):
                 return self.complete_booking(state)
             elif message.lower() in ['no', 'n']:
                 return "No worries! Can I ask why you’re not booking today?"
+            else:
+                return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
+
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -189,7 +171,7 @@ class SkipAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
-    
+
     def get_pricing(self, state, conversation_id):
         try:
             from utils.wasteking_api import create_booking, get_pricing
@@ -199,7 +181,7 @@ class SkipAgent(BaseAgent):
             booking_ref = booking_result['booking_ref']
             skip_type = state.get('type', '8yd')
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], skip_type)
-            price_num = float(str(price_result['price']).replace('£','').replace(',',''))
+            price_num = float(str(price_result['price']).replace('£', '').replace(',', ''))
             if price_num > 0:
                 state['price'] = price_result['price']
                 state['type'] = price_result.get('type', skip_type)
@@ -212,17 +194,15 @@ class SkipAgent(BaseAgent):
             print(f"❌ Pricing error: {e}")
             return "There was an issue getting pricing."
 
-# ---------------- MAVAgent ----------------
+
 class MAVAgent(BaseAgent):
     def __init__(self, rules_processor):
         super().__init__(rules_processor)
         self.service_type = 'mav'
-    
+
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
-        if any(word in message_lower for word in ['man and van', 'mav', 'van']):
-            data['service'] = 'mav'
             if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
                 data['type'] = '8yd'
             elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
@@ -230,21 +210,22 @@ class MAVAgent(BaseAgent):
             elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
                 data['type'] = '4yd'
             else:
-                data['type'] = '4yd'
-            print(f"✅ MAV service detected: {data['type']}")
+                data['type'] = '4yd'  # Default
         return data
-    
+
     def get_next_response(self, message, state, conversation_id):
         price_num = None
         if state.get('price'):
             try:
-                price_num = float(str(state['price']).replace('£','').replace(',',''))
+                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
             except:
                 price_num = 0
+
         if state.get('price'):
-            if message.lower() in ['yes', 'y']:
+            if self.should_book(message):
                 rules_check = self.rules.check_office_hours_and_transfer_rules(message, "mav", price_num)
                 print(f"📋 MAV RULES CHECK: {rules_check}")
+
                 if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
                     return self.complete_booking(state)
                 elif rules_check["situation"] == "OFFICE_HOURS":
@@ -255,8 +236,12 @@ class MAVAgent(BaseAgent):
                         return self.complete_booking(state)
             elif message.lower() in ['no', 'n']:
                 return "No worries! Can I ask why you’re not booking today?"
+            else:
+                return f"💰 {state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
+
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
+
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -267,7 +252,7 @@ class MAVAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
-    
+
     def get_pricing(self, state, conversation_id):
         try:
             from utils.wasteking_api import create_booking, get_pricing
@@ -277,34 +262,31 @@ class MAVAgent(BaseAgent):
             booking_ref = booking_result['booking_ref']
             mav_type = state.get('type', '4yd')
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], mav_type)
-            if not price_result.get('success'):
-                return "Unable to get pricing for your area."
             price = price_result['price']
             state['price'] = price
             state['booking_ref'] = booking_ref
-            state['has_pricing'] = True
             self.conversations[conversation_id] = state
-            return f"💰 {state.get('type', '4yd')} man & van at {state['postcode']}: {price}. Would you like to book?"
+            return f"💰 {mav_type} man & van at {state['postcode']}: {price}. Would you like to book?"
         except Exception as e:
             print(f"❌ MAV Pricing error: {e}")
             return "Let me get you a quote. What's your phone number?"
-    
+
     def complete_booking(self, state):
         try:
             result = complete_booking(state)
             if result.get('success'):
-                return f"✅ MAV booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result['payment_link']}"
+                return f"✅ MAV booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result.get('payment_link')}"
             else:
                 return "Unable to complete booking. Our team will call you."
         except Exception as e:
             return "Booking issue. Our team will contact you."
 
-# ---------------- GrabAgent ----------------
+
 class GrabAgent(BaseAgent):
     def __init__(self, rules_processor):
         super().__init__(rules_processor)
         self.service_type = 'grab'
-    
+
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
@@ -316,29 +298,37 @@ class GrabAgent(BaseAgent):
                 data['type'] = '6t'
             else:
                 data['type'] = '6t'
-            print(f"✅ Grab service detected: {data['type']}")
         return data
-    
+
     def get_next_response(self, message, state, conversation_id):
-        if self.should_book(message, state) and self.has_required_data(state):
-            price_num = None
-            if state.get('price'):
-                try:
-                    price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-                except:
-                    pass
-            rules_check = self.rules.check_office_hours_and_transfer_rules(message, "grab", price_num)
-            print(f"📋 GRAB RULES CHECK: {rules_check}")
-            if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
-                return self.complete_booking(state)
-            elif rules_check["situation"] == "OFFICE_HOURS":
-                if rules_check["transfer_allowed"]:
-                    self.send_forward_notification("+447823656762", state, "GRAB", price_num)
-                    return "Let me connect you with our specialist team for this service."
-                else:
+        price_num = None
+        if state.get('price'):
+            try:
+                price_num = float(str(state['price']).replace('£', '').replace(',', ''))
+            except:
+                price_num = 0
+
+        if state.get('price'):
+            if self.should_book(message):
+                rules_check = self.rules.check_office_hours_and_transfer_rules(message, "grab", price_num)
+                print(f"📋 GRAB RULES CHECK: {rules_check}")
+
+                if rules_check["situation"] == "OUT_OF_OFFICE_HOURS":
                     return self.complete_booking(state)
+                elif rules_check["situation"] == "OFFICE_HOURS":
+                    if rules_check["transfer_allowed"]:
+                        self.send_forward_notification("+447823656762", state, "GRAB", price_num)
+                        return "Let me connect you with our specialist team for this service."
+                    else:
+                        return self.complete_booking(state)
+            elif message.lower() in ['no', 'n']:
+                return "No worries! Can I ask why you’re not booking today?"
+            else:
+                return f"💰 {state.get('type', '6t')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state, conversation_id)
+
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -349,7 +339,7 @@ class GrabAgent(BaseAgent):
             return "What service do you need?"
         else:
             return "Would you like a price quote?"
-    
+
     def get_pricing(self, state, conversation_id):
         try:
             from utils.wasteking_api import create_booking, get_pricing
@@ -359,24 +349,22 @@ class GrabAgent(BaseAgent):
             booking_ref = booking_result['booking_ref']
             grab_type = state.get('type', '6t')
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], grab_type)
-            if not price_result.get('success'):
-                return "Unable to get pricing for your area."
             price = price_result['price']
             state['price'] = price
             state['booking_ref'] = booking_ref
-            state['has_pricing'] = True
             self.conversations[conversation_id] = state
-            return f"💰 {state.get('type', '6t')} grab hire at {state['postcode']}: {price}. Would you like to book?"
+            return f"💰 {grab_type} grab hire at {state['postcode']}: {price}. Would you like to book?"
         except Exception as e:
             print(f"❌ Grab Pricing error: {e}")
             return "Let me get you a quote. What's your phone number?"
-    
+
     def complete_booking(self, state):
         try:
             result = complete_booking(state)
             if result.get('success'):
-                return f"✅ Grab booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result['payment_link']}"
+                return f"✅ Grab booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result.get('payment_link')}"
             else:
                 return "Unable to complete booking. Our team will call you."
         except Exception as e:
             return "Booking issue. Our team will contact you."
+
