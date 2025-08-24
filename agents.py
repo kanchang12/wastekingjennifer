@@ -151,7 +151,7 @@ class SkipAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         # Get pricing
-        answer = self.get_pricing(self, state, conversation_id)
+        answer = self.get_pricing( state, conversation_id)
     
         # If user says yes, complete booking
         if message.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']:
