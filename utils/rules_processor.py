@@ -1,7 +1,3 @@
-# ==========================================
-# FILE 2: utils/rules_processor.py - FIXED
-# ==========================================
-
 import os
 import json
 import re
@@ -83,29 +79,19 @@ class RulesProcessor:
         """Extract mandatory exact scripts from PDF"""
         scripts = {}
         
-        # Extract permit script
         scripts["permit_script"] = "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe."
         
-        # Extract MAV suggestion
         scripts["mav_suggestion"] = "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
         
-        # Extract heavy materials script
         scripts["heavy_materials"] = "For heavy materials such as soil & rubble, the largest skip you can have is 8-yard. Shall I get you the cost of an 8-yard skip?"
         
-        # Extract sofa prohibited
         scripts["sofa_prohibited"] = "No, sofa is not allowed in a skip as it's upholstered furniture. We can help with Man & Van service. We charge extra due to EA regulations."
         
-        # Extract grab scripts
         scripts["grab_8_wheeler"] = "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry."
         scripts["grab_6_wheeler"] = "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
         
-        # Extract time restrictions
         scripts["time_restriction"] = "We can't guarantee exact times, but delivery is between 7am-6pm"
-        
-        # Extract Sunday collection
         scripts["sunday_collection"] = "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team"
-        
-        # Extract final ending
         scripts["final_ending"] = "Is there anything else I can help you with today? Please leave us a review if you're happy with our service. Thank you for your time, have a great day, bye!"
         
         return scripts
@@ -141,19 +127,18 @@ class RulesProcessor:
             "sofa_prohibited": "Sofas CANNOT go in skips - offer Man & Van",
             "permit_required_road": "Road placement requires council permit",
             "mav_suggestion_mandatory": "MUST suggest MAV for 8-yard or smaller + light materials",
-            "mandatory_info": "Must collect: name, postcode, waste type before pricing",
-            "no_price_hardcoding": "NEVER provide hardcoded prices - API ONLY"
+            "mandatory_info": "Must collect: name, postcode, waste type before pricing"
         }
     
     def _extract_mav_rules(self, text: str) -> Dict[str, Any]:
-        """Extract Man & Van rules from PDF"""
+        """Extract Man & Van rules from PDF - FIXED"""
         return {
-            "heavy_materials_transfer": "Heavy materials = MUST transfer to specialist",
-            "stairs_transfer": "Stairs/flats = MUST transfer to specialist",
+            "default_for_others": "MAV agent handles ONLY explicit man and van mentions",
+            "heavy_materials_transfer": "Heavy materials = MUST transfer to specialist during office hours",
+            "stairs_transfer": "Stairs/flats = MUST transfer to specialist during office hours",
             "transfer_threshold": 500,
             "out_hours_no_transfer": "Out of hours = NEVER transfer, make the sale",
             "office_hours_threshold": "Office hours = check £500+ threshold for transfer",
-            "no_price_hardcoding": "NEVER provide hardcoded prices - API ONLY",
             "weight_allowance": "Check API for weight allowances",
             "volume_assessment": "Always assess: items, access, volume"
         }
@@ -162,6 +147,7 @@ class RulesProcessor:
         """Extract Grab Hire rules from PDF - DEFAULT MANAGER"""
         return {
             "default_manager": "Grab agent handles ALL requests except explicit skip/mav mentions",
+            "handles_everything_else": "Unknown services, general inquiries, grab hire, all other requests",
             "6_wheeler_terminology": "6-wheeler = 12-tonne capacity - use exact script",
             "8_wheeler_terminology": "8-wheeler = 16-tonne capacity - use exact script",
             "transfer_threshold": 300,
@@ -169,9 +155,8 @@ class RulesProcessor:
             "out_hours_no_transfer": "Out of hours = NEVER transfer, make the sale",
             "suitable_materials": "Suitable for heavy materials (soil, concrete, muck)",
             "access_check": "Always check postcode and access requirements",
-            "mixed_materials_transfer": "Mixed materials → transfer to specialist",
-            "wait_load_immediate_transfer": "Wait & load skip → IMMEDIATE transfer",
-            "no_price_hardcoding": "NEVER provide hardcoded prices - API ONLY"
+            "mixed_materials_transfer": "Mixed materials → transfer to specialist during office hours",
+            "wait_load_immediate_transfer": "Wait & load skip → IMMEDIATE transfer"
         }
     
     def _extract_pricing_rules(self, text: str) -> Dict[str, Any]:
@@ -260,6 +245,8 @@ class RulesProcessor:
         day_of_week = now.weekday()  # 0=Monday, 6=Sunday
         hour = now.hour
         
+        print(f"🕐 TIME CHECK: {now.strftime('%A %H:%M')} (Day: {day_of_week}, Hour: {hour})")
+        
         # Determine business hours
         is_office_hours = False
         if day_of_week < 4:  # Monday-Thursday
@@ -272,18 +259,24 @@ class RulesProcessor:
         
         transfer_rules = self.rules_data["transfer_rules"]
         
+        print(f"🏢 OFFICE HOURS STATUS: {is_office_hours}")
+        
         # SITUATION 1: OUT OF OFFICE HOURS
         if not is_office_hours:
+            print("🌙 SITUATION 1: OUT OF OFFICE HOURS")
             return {
                 "situation": "OUT_OF_OFFICE_HOURS",
                 "action": "MAKE_THE_SALE",
                 "transfer_allowed": False,
                 "reason": "NEVER transfer out of hours - cardinal sin. Handle the call and make the sale.",
-                "is_office_hours": False
+                "is_office_hours": False,
+                "rule_applied": "LOCK_6_NO_OUT_HOURS_TRANSFER + LOCK_9_OUT_HOURS_CALLBACK"
             }
         
         # SITUATION 2: OFFICE HOURS - Check transfer thresholds
         else:
+            print("🏢 SITUATION 2: OFFICE HOURS - Checking transfer thresholds")
+            
             thresholds = {
                 "skip": transfer_rules.get("skip_hire", "NO_LIMIT"),
                 "mav": transfer_rules.get("man_and_van", 500),
@@ -300,7 +293,12 @@ class RulesProcessor:
                 reason = f"Price £{price} exceeds £{threshold} threshold for {agent_type}"
             else:
                 transfer_needed = False
-                reason = f"Price within threshold for {agent_type}"
+                if price is not None:
+                    reason = f"Price £{price} within £{threshold} threshold for {agent_type}"
+                else:
+                    reason = f"No price yet - threshold is £{threshold} for {agent_type}"
+            
+            print(f"💰 THRESHOLD CHECK: {agent_type} threshold=£{threshold}, price=${price}, transfer_needed={transfer_needed}")
             
             return {
                 "situation": "OFFICE_HOURS",
@@ -309,7 +307,8 @@ class RulesProcessor:
                 "threshold": threshold,
                 "price": price,
                 "reason": reason,
-                "is_office_hours": True
+                "is_office_hours": True,
+                "rule_applied": "LOCK_7_PRICE_THRESHOLDS"
             }
     
     def validate_no_hardcoded_prices(self, response: str) -> Dict[str, Any]:
@@ -339,6 +338,9 @@ class RulesProcessor:
         for phrase in illegal_phrases:
             if phrase in response.lower():
                 violations.append(f"ILLEGAL PRICE PHRASE: {phrase}")
+        
+        if violations:
+            print(f"🚨 LEGAL VIOLATION DETECTED: {violations}")
         
         return {
             "legal_compliant": len(violations) == 0,
@@ -380,3 +382,54 @@ class RulesProcessor:
             }
         else:
             return base_rules
+    
+    def validate_response_against_rules(self, response: str, agent_type: str) -> Dict[str, Any]:
+        """Validate agent response against business rules"""
+        rules = self.get_rules_for_agent(agent_type)
+        violations = []
+        
+        # Check for critical testing corrections
+        for correction in self.rules_data.get("testing_corrections", []):
+            if correction["wrong"].lower() in response.lower():
+                violations.append(f"CRITICAL: Used wrong phrase - {correction['wrong']}")
+        
+        # Check for hardcoded prices (LEGAL COMPLIANCE)
+        price_check = self.validate_no_hardcoded_prices(response)
+        if not price_check["legal_compliant"]:
+            violations.extend(price_check["violations"])
+        
+        # Check exact scripts
+        if "exact_scripts" in rules:
+            for script_name, script_text in rules["exact_scripts"].items():
+                if self._should_use_script(response, script_name) and script_text not in response:
+                    violations.append(f"Exact script not used for {script_name}")
+        
+        # Check VAT spelling
+        if "vat" in response.lower() and "v-a-t" not in response.lower():
+            violations.append("VAT not spelled as V-A-T")
+        
+        # Check for bundled questions (LOCK 3)
+        question_count = response.count('?')
+        if question_count > 1:
+            violations.append("LOCK 3 VIOLATION: Multiple questions bundled together")
+        
+        return {
+            "compliant": len(violations) == 0,
+            "violations": violations,
+            "agent_type": agent_type,
+            "rules_source": "PDF" if Path(self.pdf_path).exists() else "hardcoded"
+        }
+    
+    def _should_use_script(self, response: str, script_name: str) -> bool:
+        """Check if response should use specific exact script"""
+        triggers = {
+            "permit_script": ["road", "permit", "council"],
+            "mav_suggestion": ["8-yard", "light materials"],
+            "grab_6_wheeler": ["6-wheeler", "6 wheel"],
+            "grab_8_wheeler": ["8-wheeler", "8 wheel"],
+            "heavy_materials": ["heavy materials", "soil", "rubble"],
+            "sofa_prohibited": ["sofa", "upholstered"]
+        }
+        
+        script_triggers = triggers.get(script_name, [])
+        return any(trigger in response.lower() for trigger in script_triggers)
