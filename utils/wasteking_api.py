@@ -135,7 +135,7 @@ def create_payment_link(booking_ref):
     return result
 
 def complete_booking(customer_data):
-    """Complete 4-step booking process"""
+    """Complete 4-step booking process with SMS"""
     print("🚀 STARTING COMPLETE BOOKING PROCESS...")
     
     # Step 1: Create booking
@@ -162,12 +162,69 @@ def complete_booking(customer_data):
     if not payment_result.get('success'):
         return payment_result
     
+    payment_link = payment_result['payment_link']
+    
+    # Step 5: Send SMS if phone provided
+    sms_sent = False
+    if customer_data.get('phone') and payment_link:
+        sms_sent = send_sms(customer_data, booking_ref, price, payment_link)
+    
     return {
         "success": True,
         "booking_ref": booking_ref,
         "price": price,
-        "payment_link": payment_result['payment_link']
+        "payment_link": payment_link,
+        "sms_sent": sms_sent
     }
+
+def send_sms(customer_data, booking_ref, price, payment_link):
+    """Send SMS with payment link using Twilio"""
+    try:
+        import os
+        
+        # Check Twilio credentials
+        twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
+        twilio_token = os.getenv('TWILIO_AUTH_TOKEN') 
+        twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
+        
+        if not all([twilio_sid, twilio_token, twilio_phone]):
+            print("⚠️ Twilio not configured - SMS not sent")
+            return False
+        
+        try:
+            from twilio.rest import Client
+            client = Client(twilio_sid, twilio_token)
+            
+            phone = customer_data.get('phone', '')
+            name = customer_data.get('firstName', 'Customer')
+            
+            # Format phone number
+            if phone.startswith('0'):
+                phone = f"+44{phone[1:]}"
+            elif not phone.startswith('+'):
+                phone = f"+44{phone}"
+            
+            message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
+            
+            result = client.messages.create(
+                body=message,
+                from_=twilio_phone,
+                to=phone
+            )
+            
+            print(f"✅ SMS sent to {phone} - SID: {result.sid}")
+            return True
+            
+        except ImportError:
+            print("❌ Twilio library not installed")
+            return False
+        except Exception as e:
+            print(f"❌ SMS error: {e}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ SMS setup error: {e}")
+        return False
 
 def is_business_hours():
     """Check if it's business hours"""
