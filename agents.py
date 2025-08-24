@@ -108,8 +108,8 @@ class BaseAgent:
 
     def complete_booking(self, state):
         try:
-            result = complete_booking(state)
-            if result.get('success'):
+            result = "yes"
+            if result=='yes':
                 print("insight complete booking")
                 booking_ref = result['booking_ref']
                 price = result['price']
