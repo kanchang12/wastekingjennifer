@@ -100,13 +100,13 @@ class SkipAgent(BaseAgent):
         return data
     
     def get_next_response(self, message, state):
-        """Get next response for skip hire"""
+        """Get next response for skip hire - ALWAYS MAKE THE SALE"""
         
-        # Check if should book
+        # ALWAYS proceed with booking if customer wants it
         if self.should_book(message, state) and self.has_required_data(state):
             return self.complete_booking(state)
         
-        # Check if should get price  
+        # ALWAYS get price if requested
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
             return self.get_pricing(state)
         
@@ -123,31 +123,35 @@ class SkipAgent(BaseAgent):
             return "Would you like a price quote?"
     
     def get_pricing(self, state):
-        """Get pricing for skip"""
+        """Get pricing for skip - Use REAL API prices only"""
         try:
             from utils.wasteking_api import create_booking, get_pricing
             
             # Create booking to get price
             booking_result = create_booking()
             if not booking_result.get('success'):
-                return "Unable to get pricing right now. Can I take your details?"
+                return "Unable to create booking reference right now."
             
             booking_ref = booking_result['booking_ref']
             
-            # Get price
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'])
-            if not price_result.get('success'):
-                return "Unable to get pricing for your area. Can I take your details?"
+            # Get price with skip type
+            skip_type = state.get('type', '8yd')
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], skip_type)
             
-            price = price_result['price']
-            state['price'] = price
-            state['booking_ref'] = booking_ref
-            
-            return f"💰 {state.get('type', '8yd')} skip hire at {state['postcode']}: £{price}. Would you like to book this?"
+            if price_result.get('success'):
+                price = price_result['price']
+                actual_type = price_result.get('type', skip_type)
+                state['price'] = price
+                state['type'] = actual_type
+                state['booking_ref'] = booking_ref
+                
+                return f"💰 {actual_type} skip hire at {state['postcode']}: {price}. Would you like to book this?"
+            else:
+                return "Unable to get pricing for your area right now."
             
         except Exception as e:
             print(f"❌ Pricing error: {e}")
-            return "Let me get you a quote. What's your phone number?"
+            return "There was an issue getting pricing."
     
     def complete_booking(self, state):
         """Complete booking process"""
