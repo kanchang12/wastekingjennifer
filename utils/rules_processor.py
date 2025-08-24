@@ -102,7 +102,7 @@ class RulesProcessor:
             "monday_thursday": "8:00am-5:00pm",
             "friday": "8:00am-4:30pm", 
             "saturday": "9:00am-12:00pm",
-            "sunday": "CLOSED"
+            "sunday": "8:00am-5:00pm"
         }
     
     def _extract_transfer_rules(self, text: str) -> Dict[str, Any]:
