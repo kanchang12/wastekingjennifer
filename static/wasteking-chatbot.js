@@ -8,7 +8,7 @@
 
     // Configuration
     const CONFIG = {
-        apiUrl: 'https://double-angelia-onewebonly-cf4e958c.koyeb.app/api/chat',
+        apiUrl: 'https://double-angelia-onewebonly-cf4e958c.koyeb.app//api/wasteking',
         botName: 'WasteKing Assistant',
         primaryColor: '#2563eb',
         secondaryColor: '#1f2937',
