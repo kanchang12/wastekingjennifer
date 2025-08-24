@@ -7,8 +7,7 @@ from pathlib import Path
 
 class RulesProcessor:
     def __init__(self):
-        self.pdf_path = "data/rules/all rules.pdf"
-        self.rules_data = self._load_all_rules()
+        pass
     
     def _load_all_rules(self) -> Dict[str, Any]:
         """Load rules from PDF first, fallback to hardcoded if PDF not available"""
