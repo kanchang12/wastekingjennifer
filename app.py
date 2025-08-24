@@ -1,4 +1,3 @@
-# FILE 1: app.py (Flask Application) - NO HARDCODING
 import os
 import json
 from datetime import datetime
