@@ -113,11 +113,11 @@ class BaseAgent:
                 booking_ref = result['booking_ref']
                 price = result['price']
                 payment_link = result.get('payment_link')
+                phone =  state['phone']
                 response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
                 if payment_link:
                     response += f". Payment link: {payment_link}"
-                    if state.get('phone'):
-                        self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
+                    self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
                 state['booking_completed'] = True
                 return response
             else:
