@@ -108,8 +108,9 @@ class BaseAgent:
 
     def complete_booking(self, state):
         try:
-            result = complete_booking(state)
+            result = complete_booking(stat
             if result.get('success'):
+                print("insight complete booking")
                 booking_ref = result['booking_ref']
                 price = result['price']
                 payment_link = result.get('payment_link')
@@ -157,7 +158,8 @@ class SkipAgent(BaseAgent):
         answer = self.get_pricing( state, conversation_id)
     
         # If user says yes, complete booking
-        if message.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']:
+        if answer.lower() in ['yes', 'y', 'yeah', 'ok', 'alright', 'sure', 'go ahead']:
+            print("calling booking")
             return self.complete_booking(state)
     
         # Ask for missing info
