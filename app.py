@@ -1,7 +1,7 @@
 import os
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 
 # Import your existing rules processor
 from utils.rules_processor import RulesProcessor
@@ -99,6 +99,11 @@ def index():
             "Step 5: Send SMS with payment link"
         ]
     })
+
+@app.route('/wasteking-chatbot.js')
+def serve_chatbot_js():
+    # Assumes wasteking-chatbot.js is in ./static/
+    return send_from_directory('static', 'wasteking-chatbot.js')
 
 @app.route('/api/wasteking', methods=['POST'])
 def process_message():
