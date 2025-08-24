@@ -1,160 +1,166 @@
 import os
-import requests
 import json
 from datetime import datetime
+from flask import Flask, request, jsonify
 
-# WasteKing API Configuration
-BASE_URL = os.getenv('WASTEKING_BASE_URL', 'https://wk-smp-api-dev.azurewebsites.net')
-ACCESS_TOKEN = os.getenv('WASTEKING_ACCESS_TOKEN', 'wk-KZPY-tGF-@d.Aby9fpvMC_VVWkX-GN.i7jCBhF3xceoFfhmawaNc.RH.G_-kwk8*')
+# Import your existing rules processor
+from utils.rules_processor import RulesProcessor
 
-def wasteking_request(endpoint, payload, method="POST"):
-    """Simple WasteKing API request function"""
+# Import the simple agents
+from agents import SkipAgent, MAVAgent, GrabAgent
+
+app = Flask(__name__)
+
+# Initialize system
+print("🚀 Initializing WasteKing Simple System...")
+
+# Load rules
+rules_processor = RulesProcessor()
+print("📋 Rules processor loaded")
+
+# Initialize agents
+skip_agent = SkipAgent(rules_processor)
+mav_agent = MAVAgent(rules_processor)
+grab_agent = GrabAgent(rules_processor)
+
+print("✅ All agents initialized")
+print("🔧 Environment check:")
+print(f"   WASTEKING_BASE_URL: {os.getenv('WASTEKING_BASE_URL', 'Not set')}")
+print(f"   WASTEKING_ACCESS_TOKEN: {'Set' if os.getenv('WASTEKING_ACCESS_TOKEN') else 'Not set'}")
+
+def route_to_agent(message, conversation_id):
+    """Route message to appropriate agent"""
+    message_lower = message.lower()
+    
+    # Check for explicit service mentions
+    if any(word in message_lower for word in ['skip', 'skip hire']):
+        print("🔄 Routing to Skip Agent")
+        return skip_agent.process_message(message, conversation_id)
+    
+    elif any(word in message_lower for word in ['man and van', 'mav', 'van']):
+        print("🔄 Routing to MAV Agent") 
+        return mav_agent.process_message(message, conversation_id)
+    
+    elif any(word in message_lower for word in ['grab', 'grab hire']):
+        print("🔄 Routing to Grab Agent")
+        return grab_agent.process_message(message, conversation_id)
+    
+    else:
+        # Default to skip agent
+        print("🔄 Routing to Skip Agent (default)")
+        return skip_agent.process_message(message, conversation_id)
+
+@app.route('/')
+def index():
+    return jsonify({
+        "message": "WasteKing Simple System",
+        "status": "running",
+        "timestamp": datetime.now().isoformat(),
+        "agents": ["Skip", "MAV", "Grab"],
+        "features": [
+            "4-step WasteKing API booking",
+            "Simple agent routing",
+            "Rules-based responses",
+            "Sequential question asking"
+        ]
+    })
+
+@app.route('/api/wasteking', methods=['POST'])
+def process_message():
+    """Main endpoint for processing customer messages"""
     try:
-        url = f"{BASE_URL}/{endpoint}"
-        headers = {
-            "Content-Type": "application/json",
-            "x-wasteking-request": ACCESS_TOKEN
-        }
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "message": "No data provided"}), 400
         
-        print(f"🌐 API REQUEST: {method} {url}")
-        print(f"📦 PAYLOAD: {json.dumps(payload, indent=2)}")
+        customer_message = data.get('customerquestion', '').strip()
+        conversation_id = data.get('elevenlabs_conversation_id', f"conv_{int(datetime.now().timestamp())}")
         
-        if method == "POST":
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
-        else:
-            response = requests.get(url, params=payload, headers=headers, timeout=15)
+        print(f"📩 Message: {customer_message}")
+        print(f"🆔 Conversation: {conversation_id}")
         
-        print(f"📊 RESPONSE: {response.status_code} - {response.text}")
+        if not customer_message:
+            return jsonify({"success": False, "message": "No message provided"}), 400
         
-        if response.status_code == 200:
-            try:
-                return {"success": True, **response.json()}
-            except:
-                return {"success": True, "response": response.text}
-        else:
-            return {"success": False, "error": f"HTTP {response.status_code}", "response": response.text}
-            
+        # Route to appropriate agent
+        response = route_to_agent(customer_message, conversation_id)
+        
+        print(f"🤖 Response: {response}")
+        
+        return jsonify({
+            "success": True,
+            "message": response,
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        print(f"❌ API ERROR: {str(e)}")
-        return {"success": False, "error": str(e)}
+        print(f"❌ Error: {e}")
+        return jsonify({
+            "success": False,
+            "message": "I'll connect you with our team who can help immediately.",
+            "error": str(e)
+        }), 500
 
-def create_booking():
-    """Step 1: Create booking reference"""
-    print("📋 STEP 1: Creating booking...")
-    payload = {"type": "chatbot", "source": "wasteking.co.uk"}
-    result = wasteking_request("api/booking/create", payload)
-    
-    if result.get('success'):
-        booking_ref = result.get('bookingRef') or result.get('booking_ref')
-        print(f"✅ BOOKING REF: {booking_ref}")
-        return {"success": True, "booking_ref": booking_ref}
-    return result
+@app.route('/api/test', methods=['POST'])
+def test_api():
+    """Test WasteKing API directly"""
+    try:
+        from utils.wasteking_api import create_booking, get_pricing, complete_booking
+        
+        data = request.get_json() or {}
+        action = data.get('action', 'create_booking')
+        
+        if action == 'create_booking':
+            result = create_booking()
+        elif action == 'get_pricing':
+            result = get_pricing(
+                data.get('booking_ref'),
+                data.get('postcode', 'LU1 1DQ'),
+                data.get('service', 'skip')
+            )
+        elif action == 'complete_booking':
+            result = complete_booking({
+                'firstName': data.get('firstName', 'Test'),
+                'phone': data.get('phone', '01234567890'),
+                'postcode': data.get('postcode', 'LU1 1DQ'),
+                'service': data.get('service', 'skip')
+            })
+        else:
+            result = {"success": False, "error": "Unknown action"}
+        
+        return jsonify({
+            "success": True,
+            "action": action,
+            "result": result
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
-def get_pricing(booking_ref, postcode, service):
-    """Step 2: Get pricing with booking ref"""
-    print(f"💰 STEP 2: Getting price for {service} at {postcode}...")
-    payload = {
-        "bookingRef": booking_ref,
-        "search": {
-            "postCode": postcode,
-            "service": service
-        }
-    }
-    result = wasteking_request("api/booking/update", payload)
-    
-    if result.get('success'):
-        price = result.get('price') or result.get('totalPrice') or result.get('cost')
-        print(f"✅ PRICE: £{price}")
-        return {"success": True, "price": price}
-    return result
+@app.route('/api/health')
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "agents": ["Skip", "MAV", "Grab"],
+        "rules_loaded": bool(rules_processor),
+        "api_configured": bool(os.getenv('WASTEKING_ACCESS_TOKEN'))
+    })
 
-def update_booking_details(booking_ref, customer_data):
-    """Step 3: Update booking with customer details"""
-    print("📝 STEP 3: Updating customer details...")
-    payload = {
-        "bookingRef": booking_ref,
-        "customer": {
-            "firstName": customer_data.get('firstName', ''),
-            "lastName": customer_data.get('lastName', ''),
-            "phone": customer_data.get('phone', ''),
-            "emailAddress": customer_data.get('email', ''),
-            "addressPostcode": customer_data.get('postcode', '')
-        },
-        "service": {
-            "date": customer_data.get('date', ''),
-            "time": "am",
-            "placement": "drive",
-            "notes": f"{customer_data.get('service', '')} booking"
-        }
-    }
-    result = wasteking_request("api/booking/update", payload)
-    
-    if result.get('success'):
-        print("✅ DETAILS UPDATED")
-        return {"success": True}
-    return result
+@app.after_request
+def after_request(response):
+    """Add CORS headers"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
-def create_payment_link(booking_ref):
-    """Step 4: Create payment link"""
-    print("💳 STEP 4: Creating payment link...")
-    payload = {
-        "bookingRef": booking_ref,
-        "action": "quote",
-        "postPaymentUrl": "https://wasteking.co.uk/thank-you/"
-    }
-    result = wasteking_request("api/booking/update", payload)
-    
-    if result.get('success'):
-        payment_link = result.get('paymentUrl') or result.get('payment_link') or result.get('quoteUrl')
-        print(f"✅ PAYMENT LINK: {payment_link}")
-        return {"success": True, "payment_link": payment_link}
-    return result
-
-def complete_booking(customer_data):
-    """Complete 4-step booking process"""
-    print("🚀 STARTING COMPLETE BOOKING PROCESS...")
-    
-    # Step 1: Create booking
-    booking_result = create_booking()
-    if not booking_result.get('success'):
-        return booking_result
-    
-    booking_ref = booking_result['booking_ref']
-    
-    # Step 2: Get pricing
-    pricing_result = get_pricing(booking_ref, customer_data['postcode'], customer_data['service'])
-    if not pricing_result.get('success'):
-        return pricing_result
-    
-    price = pricing_result['price']
-    
-    # Step 3: Update details
-    details_result = update_booking_details(booking_ref, customer_data)
-    if not details_result.get('success'):
-        return details_result
-    
-    # Step 4: Create payment link
-    payment_result = create_payment_link(booking_ref)
-    if not payment_result.get('success'):
-        return payment_result
-    
-    return {
-        "success": True,
-        "booking_ref": booking_ref,
-        "price": price,
-        "payment_link": payment_result['payment_link']
-    }
-
-def is_business_hours():
-    """Check if it's business hours"""
-    now = datetime.now()
-    day_of_week = now.weekday()  # 0=Monday, 6=Sunday
-    hour = now.hour
-    
-    if day_of_week < 4:  # Monday-Thursday
-        return 8 <= hour < 17
-    elif day_of_week == 4:  # Friday
-        return 8 <= hour < 16
-    elif day_of_week == 5:  # Saturday
-        return 9 <= hour < 12
-    return False  # Sunday closed
+if __name__ == '__main__':
+    print("🚀 Starting WasteKing Simple System...")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
