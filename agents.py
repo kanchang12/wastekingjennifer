@@ -29,7 +29,7 @@ class BaseAgent:
         self.conversations[conversation_id] = state
         
         # Determine what to ask next
-        response = self.get_next_response(message, state)
+        response = self.get_next_response(message, state, conversation_id)
         
         return response
     
@@ -206,7 +206,7 @@ class SkipAgent(BaseAgent):
         
         return data
     
-    def get_next_response(self, message, state):
+    def get_next_response(self, message, state, conversation_id):
         """Get next response for skip hire - ALWAYS MAKE THE SALE"""
         
         # ALWAYS proceed with booking if customer wants it
@@ -215,7 +215,7 @@ class SkipAgent(BaseAgent):
         
         # ALWAYS get price if requested
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
-            return self.get_pricing(state)
+            return self.get_pricing(state, conversation_id)
         
         # Ask for missing info
         if not state.get('firstName'):
@@ -229,8 +229,8 @@ class SkipAgent(BaseAgent):
         else:
             return "Would you like a price quote?"
     
-    def get_pricing(self, state):
-        """Get pricing for skip - Use REAL API prices only"""
+    def get_pricing(self, state, conversation_id):
+        """Get pricing for skip - Use REAL API prices only - FIXED: Save state"""
         try:
             from utils.wasteking_api import create_booking, get_pricing
             
@@ -248,9 +248,16 @@ class SkipAgent(BaseAgent):
             if price_result.get('success'):
                 price = price_result['price']
                 actual_type = price_result.get('type', skip_type)
+                
+                # CRITICAL FIX: Update state AND save to conversation storage
                 state['price'] = price
                 state['type'] = actual_type
                 state['booking_ref'] = booking_ref
+                state['has_pricing'] = True
+                
+                # SAVE STATE BACK TO CONVERSATION STORAGE
+                self.conversations[conversation_id] = state
+                print(f"💾 SAVED STATE WITH PRICE: {state}")
                 
                 return f"💰 {actual_type} skip hire at {state['postcode']}: {price}. Would you like to book this?"
             else:
@@ -306,20 +313,21 @@ class MAVAgent(BaseAgent):
         if any(word in message_lower for word in ['man and van', 'mav', 'van']):
             data['service'] = 'mav'
             
-            if 'small' in message_lower:
-                data['type'] = 'small'
-            elif 'medium' in message_lower:
-                data['type'] = 'medium'
-            elif 'large' in message_lower:
-                data['type'] = 'large'
+            # Extract van size in YARDS like you showed me
+            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
+                data['type'] = '8yd'
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+                data['type'] = '6yd'
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+                data['type'] = '4yd'
             else:
-                data['type'] = 'small'  # Default
+                data['type'] = '4yd'  # Default
             
             print(f"✅ MAV service detected: {data['type']}")
         
         return data
     
-    def get_next_response(self, message, state):
+    def get_next_response(self, message, state, conversation_id):
         """Get next response for man and van"""
         
         # Check office hours for transfer threshold
@@ -337,7 +345,7 @@ class MAVAgent(BaseAgent):
         
         # Check if should get price  
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
-            return self.get_pricing(state)
+            return self.get_pricing(state, conversation_id)
         
         # Ask for missing info
         if not state.get('firstName'):
@@ -351,8 +359,8 @@ class MAVAgent(BaseAgent):
         else:
             return "Would you like a price quote?"
     
-    def get_pricing(self, state):
-        """Get pricing for MAV"""
+    def get_pricing(self, state, conversation_id):
+        """Get pricing for MAV - FIXED: Save state"""
         try:
             from utils.wasteking_api import create_booking, get_pricing
             
@@ -361,16 +369,24 @@ class MAVAgent(BaseAgent):
                 return "Unable to get pricing right now."
             
             booking_ref = booking_result['booking_ref']
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'])
+            mav_type = state.get('type', '4yd')
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], mav_type)
             
             if not price_result.get('success'):
                 return "Unable to get pricing for your area."
             
             price = price_result['price']
+            
+            # CRITICAL FIX: Update state AND save to conversation storage
             state['price'] = price
             state['booking_ref'] = booking_ref
+            state['has_pricing'] = True
             
-            return f"💰 {state.get('type', 'small')} man & van at {state['postcode']}: £{price}. Would you like to book?"
+            # SAVE STATE BACK TO CONVERSATION STORAGE
+            self.conversations[conversation_id] = state
+            print(f"💾 SAVED STATE WITH PRICE: {state}")
+            
+            return f"💰 {state.get('type', '4yd')} man & van at {state['postcode']}: {price}. Would you like to book?"
             
         except Exception as e:
             print(f"❌ MAV Pricing error: {e}")
@@ -381,7 +397,7 @@ class MAVAgent(BaseAgent):
         try:
             result = complete_booking(state)
             if result.get('success'):
-                return f"✅ MAV booking confirmed! Ref: {result['booking_ref']}, Price: £{result['price']}. Payment: {result['payment_link']}"
+                return f"✅ MAV booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result['payment_link']}"
             else:
                 return "Unable to complete booking. Our team will call you."
         except Exception as e:
@@ -401,8 +417,11 @@ class GrabAgent(BaseAgent):
         if any(word in message_lower for word in ['grab', 'grab hire']):
             data['service'] = 'grab'
             
-            if '8' in message_lower and 'tonne' in message_lower:
+            # Extract grab size in tonnes 
+            if any(size in message_lower for size in ['8-tonne', '8 tonne', '8t']):
                 data['type'] = '8t'
+            elif any(size in message_lower for size in ['6-tonne', '6 tonne', '6t']):
+                data['type'] = '6t'
             else:
                 data['type'] = '6t'  # Default
             
@@ -410,7 +429,7 @@ class GrabAgent(BaseAgent):
         
         return data
     
-    def get_next_response(self, message, state):
+    def get_next_response(self, message, state, conversation_id):
         """Get next response for grab hire"""
         
         # Check office hours for transfer threshold
@@ -428,7 +447,7 @@ class GrabAgent(BaseAgent):
         
         # Check if should get price  
         if self.should_get_price(message, state) and state.get('postcode') and state.get('service'):
-            return self.get_pricing(state)
+            return self.get_pricing(state, conversation_id)
         
         # Ask for missing info
         if not state.get('firstName'):
@@ -442,8 +461,8 @@ class GrabAgent(BaseAgent):
         else:
             return "Would you like a price quote?"
     
-    def get_pricing(self, state):
-        """Get pricing for grab"""
+    def get_pricing(self, state, conversation_id):
+        """Get pricing for grab - FIXED: Save state"""
         try:
             from utils.wasteking_api import create_booking, get_pricing
             
@@ -452,16 +471,24 @@ class GrabAgent(BaseAgent):
                 return "Unable to get pricing right now."
             
             booking_ref = booking_result['booking_ref']
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'])
+            grab_type = state.get('type', '6t')
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], grab_type)
             
             if not price_result.get('success'):
                 return "Unable to get pricing for your area."
             
             price = price_result['price']
+            
+            # CRITICAL FIX: Update state AND save to conversation storage
             state['price'] = price
             state['booking_ref'] = booking_ref
+            state['has_pricing'] = True
             
-            return f"💰 {state.get('type', '6t')} grab hire at {state['postcode']}: £{price}. Would you like to book?"
+            # SAVE STATE BACK TO CONVERSATION STORAGE
+            self.conversations[conversation_id] = state
+            print(f"💾 SAVED STATE WITH PRICE: {state}")
+            
+            return f"💰 {state.get('type', '6t')} grab hire at {state['postcode']}: {price}. Would you like to book?"
             
         except Exception as e:
             print(f"❌ Grab Pricing error: {e}")
@@ -472,7 +499,7 @@ class GrabAgent(BaseAgent):
         try:
             result = complete_booking(state)
             if result.get('success'):
-                return f"✅ Grab booking confirmed! Ref: {result['booking_ref']}, Price: £{result['price']}. Payment: {result['payment_link']}"
+                return f"✅ Grab booking confirmed! Ref: {result['booking_ref']}, Price: {result['price']}. Payment: {result['payment_link']}"
             else:
                 return "Unable to complete booking. Our team will call you."
         except Exception as e:
