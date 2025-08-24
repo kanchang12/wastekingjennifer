@@ -3,7 +3,7 @@ import json
 import os
 import requests
 from datetime import datetime
-from utils.wasteking_api import complete_booking, is_business_hours
+from utils.wasteking_api import complete_booking
 
 
 class BaseAgent:
