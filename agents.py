@@ -285,7 +285,7 @@ class BaseAgent:
         data = {}
         message_lower = message.lower()
 
-        # FIXED: Better postcode regex - requires complete postcode format like LS14ED
+        # Postcode regex - requires complete postcode format like LS14ED
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
         if postcode_match:
             postcode = postcode_match.group(1).replace(' ', '')
@@ -299,71 +299,44 @@ class BaseAgent:
             data['phone'] = phone_match.group(1)
             print(f"✅ Extracted phone: {data['phone']}")
 
-        # FIXED: More restrictive name extraction to avoid "Yes" being captured as name
-        # Only extract names from specific patterns, not from random words
+        # Extract names - SIMPLE AND WORKING
         if 'kanchen' in message_lower or 'kanchan' in message_lower:
             data['firstName'] = 'Kanchan'
             print(f"✅ Extracted name: Kanchan")
         else:
-            # More specific name patterns to avoid false positives
+            # Only extract if it's clearly a name, not random words
             name_patterns = [
-                r'(?:my\s+name\s+is|i\s+am|call\s+me)\s+([A-Z][a-z]+)',  # "My name is John", "I am John", "Call me John"
-                r'^([A-Z][a-z]+)\s+(?:here|speaking|calling)',  # "John here", "John speaking", "John calling"  
-                r'for\s+([A-Z][a-z]+)\s*,?\s*$',  # "for John," at end of message
+                r'(?:my\s+name\s+is|i\s+am|call\s+me)\s+([A-Z][a-z]+)',
+                r'^([A-Z][a-z]+)\s+(?:here|speaking|calling)',
             ]
             for pattern in name_patterns:
                 name_match = re.search(pattern, message)
                 if name_match:
                     potential_name = name_match.group(1).strip().title()
-                    # Don't extract common words as names
-                    if potential_name.lower() not in ['yes', 'no', 'okay', 'sure', 'there', 'easy', 'good']:
+                    # Blacklist common words that aren't names
+                    if potential_name.lower() not in ['yes', 'no', 'okay', 'sure', 'there', 'easy', 'good', 'what', 'how', 'when']:
                         data['firstName'] = potential_name
                         print(f"✅ Extracted name: {data['firstName']}")
                         break
 
-        # FIXED: Better waste type extraction for skip hire
-        waste_indicators = []
-        
-        # Heavy materials (important for skip sizing)
-        if any(heavy in message_lower for heavy in ['brick', 'bricks', 'concrete', 'soil', 'rubble', 'hardcore', 'stone', 'tiles', 'gravel']):
-            waste_indicators.append('heavy materials')
+        # Extract waste type information
+        if any(waste in message_lower for waste in ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'concrete', 'soil', 'rubble']):
+            waste_types = []
+            if any(w in message_lower for w in ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper']):
+                waste_types.append('light materials')
+            if any(w in message_lower for w in ['bricks', 'brick', 'concrete', 'soil', 'rubble', 'hardcore']):
+                waste_types.append('heavy materials')
+            if any(w in message_lower for w in ['renovation', 'building', 'construction']):
+                waste_types.append('renovation waste')
             
-        # Light materials
-        if any(light in message_lower for light in ['wood', 'furniture', 'cardboard', 'paper', 'plastic', 'clothes', 'books', 'toys']):
-            waste_indicators.append('light materials')
-            
-        # Renovation/construction waste
-        if any(reno in message_lower for reno in ['renovation', 'building', 'construction', 'demolition', 'diy']):
-            waste_indicators.append('renovation waste')
-            
-        # General household
-        if any(house in message_lower for house in ['household', 'domestic', 'general']):
-            waste_indicators.append('household waste')
-            
-        if waste_indicators:
-            data['waste_type'] = ', '.join(waste_indicators)
-            print(f"✅ Extracted waste type: {data['waste_type']}")
+            if waste_types:
+                data['waste_type'] = ', '.join(set(waste_types))  # Remove duplicates
+                print(f"✅ Extracted waste type: {data['waste_type']}")
 
-        # FIXED: Better location extraction
-        location_indicators = []
-        if any(drive in message_lower for drive in ['driveway', 'drive', 'private land']):
-            location_indicators.append('driveway')
-        if any(road in message_lower for road in ['road', 'street', 'pavement', 'outside']):
-            location_indicators.append('road')
-        if any(access in message_lower for access in ['easy access', 'accessible', 'clear access']):
-            location_indicators.append('easy access')
-            
-        if location_indicators:
-            data['location_info'] = ', '.join(location_indicators)
-            print(f"✅ Extracted location info: {data['location_info']}")
-
-        # FIXED: Extract timing information
-        if any(time in message_lower for time in ['next tuesday', 'tomorrow', 'today', 'this week', 'next week', 'urgent']):
-            for time_phrase in ['next tuesday', 'tomorrow', 'today', 'this week', 'next week', 'urgent']:
-                if time_phrase in message_lower:
-                    data['timing'] = time_phrase
-                    print(f"✅ Extracted timing: {data['timing']}")
-                    break
+        # Extract location information
+        if any(loc in message_lower for loc in ['driveway', 'drive', 'private', 'road', 'street', 'easy access', 'access']):
+            data['location_mentioned'] = True
+            print(f"✅ Location mentioned in message")
 
         return data
 
@@ -407,20 +380,20 @@ class BaseAgent:
         return False  # Sunday closed
 
     def needs_transfer(self, price):
-        """Check if transfer is needed based on price thresholds"""
+        """SKIP HIRE = NO TRANSFER EVER - ALWAYS MAKE THE SALE"""
         if self.service_type == 'skip':
-            return False  # Skip has NO_LIMIT - never transfer
+            return False  # SKIP HIRE: NO LIMIT - NEVER TRANSFER - ALWAYS BOOK
         
         elif self.service_type == 'mav' and price >= 500:
             if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - TRANSFER WOULD BE NEEDED BUT OUT OF HOURS = MAKE THE SALE INSTEAD")
+                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
                 return False
             print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £500+ MAV")
             return True
             
         elif self.service_type == 'grab' and price >= 300:
             if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - TRANSFER WOULD BE NEEDED BUT OUT OF HOURS = MAKE THE SALE INSTEAD")
+                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
                 return False
             print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £300+ GRAB")
             return True
@@ -537,23 +510,30 @@ class BaseAgent:
             return self.validate_postcode_with_customer(state.get('postcode'))
 
     def get_pricing_and_ask(self, state, conversation_id):
-        """Get pricing and ask for booking"""
+        """Get pricing and ask for booking - MUST ACTUALLY CALL THE API"""
         try:
             from utils.wasteking_api import create_booking, get_pricing
             
+            print("📞 CALLING CREATE_BOOKING API...")
             booking_result = create_booking()
             if not booking_result.get('success'):
-                return "Unable to get pricing right now."
+                print("❌ CREATE_BOOKING FAILED")
+                return "Unable to get pricing right now. Let me put you through to our team."
             
             booking_ref = booking_result['booking_ref']
             service_type = state.get('type', self.default_type)
             
+            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}")
             price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type)
+            
             if not price_result.get('success'):
+                print("❌ GET_PRICING FAILED - POSTCODE ISSUE")
                 return self.validate_postcode_with_customer(state.get('postcode'))
             
             price = price_result['price']
             price_num = float(str(price).replace('£', '').replace(',', ''))
+            
+            print(f"💰 GOT PRICE: {price} (numeric: {price_num})")
             
             if price_num > 0:
                 state['price'] = price
@@ -561,17 +541,20 @@ class BaseAgent:
                 state['booking_ref'] = booking_ref
                 self.conversations[conversation_id] = state
                 
-                # Check if needs transfer
+                # Check if needs transfer - BUT SKIP HIRE NEVER TRANSFERS
                 if self.needs_transfer(price_num):
+                    print("🔄 TRANSFER NEEDED")
                     return "For this size job, let me put you through to our specialist team for the best service."
                 
+                print("✅ PRESENTING PRICE TO USER")
                 return f"💰 {state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
+                print("❌ ZERO PRICE RETURNED")
                 return self.validate_postcode_with_customer(state.get('postcode'))
                 
         except Exception as e:
             print(f"❌ PRICING ERROR: {e}")
-            return self.validate_postcode_with_customer(state.get('postcode'))
+            return "Unable to get pricing right now. Let me put you through to our team."
 
 
 class SkipAgent(BaseAgent):
@@ -611,7 +594,7 @@ class SkipAgent(BaseAgent):
         return has_all
 
     def get_next_response(self, message, state, conversation_id):
-        """FIXED: Better flow logic with proper information checking"""
+        """SIMPLE WORKING BOOKING FLOW - NO OVERCOMPLICATION"""
         wants_to_book = self.should_book(message)
         
         # If user wants to book and we have pricing, complete booking immediately
@@ -619,13 +602,7 @@ class SkipAgent(BaseAgent):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
 
-        # FIXED: Check if user is asking for pricing directly
-        if any(phrase in message.lower() for phrase in ['price', 'cost', 'quote', 'availability', 'check availability']):
-            if self.has_all_required_info(state):
-                print("🚀 USER ASKING FOR PRICE WITH ALL INFO - GET PRICING")
-                return self.get_pricing_and_ask(state, conversation_id)
-
-        # STEP 1: Basic Information Gathering
+        # BASIC INFO GATHERING
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -637,66 +614,31 @@ class SkipAgent(BaseAgent):
                 state['type'] = '8yd'  # Default
             self.conversations[conversation_id] = state
 
-        # STEP 2: Waste Content Check (ONLY ask if not already answered)
+        # If user mentioned waste type, skip the question
         elif not state.get('waste_type') and not state.get('waste_content_asked'):
             state['waste_content_asked'] = True
             self.conversations[conversation_id] = state
             return "What are you going to keep in the skip?"
         
-        # FIXED: If waste type was provided in this message or previous messages, mark as answered
-        elif state.get('waste_type') and not state.get('materials_assessed'):
-            state['materials_assessed'] = True
-            self.conversations[conversation_id] = state
-            
-            # Check if 12 yard skip with heavy materials
-            if state.get('type') == '12yd' and 'heavy materials' in state.get('waste_type', ''):
-                return "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller."
-            # MAN & VAN SUGGESTION for 8yd or smaller with light materials only
-            elif state.get('type') in ['8yd', '6yd', '4yd'] and 'heavy materials' not in state.get('waste_type', ''):
-                return "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
-
-        # STEP 3: Location Check (ONLY ask if not already provided)
-        elif not state.get('location_info') and not state.get('location_asked'):
-            state['location_asked'] = True
-            self.conversations[conversation_id] = state
-            return "Will the skip go on your driveway or on the road?"
-        
-        # FIXED: Handle permit requirements for road placement
-        elif state.get('location_info') and 'road' in state.get('location_info', '') and not state.get('permit_handled'):
-            state['permit_handled'] = True
-            state['needs_permit'] = True
-            self.conversations[conversation_id] = state
-            return "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe."
-
-        # STEP 4: Access Check (ONLY ask if not confirmed)
-        elif not state.get('access_confirmed') and not state.get('access_asked'):
-            state['access_asked'] = True
-            self.conversations[conversation_id] = state
-            return "Is there easy access for our lorry to deliver the skip? Any low bridges, narrow roads, or parking restrictions? We need 3.5m width minimum."
-        
-        # FIXED: If access mentioned, mark as confirmed
-        elif ('easy access' in state.get('location_info', '') or 'easy access' in message.lower()) and not state.get('access_confirmed'):
-            state['access_confirmed'] = True
-            self.conversations[conversation_id] = state
-
-        # STEP 5: Phone Number
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
 
-        # FIXED: If we have all required info and user wants booking/price
-        elif self.has_all_required_info(state) and (wants_to_book or not state.get('price')):
-            if wants_to_book and not state.get('price'):
-                print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
-                return self.get_pricing_and_complete_booking(state, conversation_id)
-            elif not state.get('price'):
-                print("🚀 HAVE ALL INFO - GETTING PRICING")
-                return self.get_pricing_and_ask(state, conversation_id)
+        # PRICING AND BOOKING - SIMPLE LOGIC
+        # If user wants to book, get price and complete booking immediately
+        elif wants_to_book and not state.get('price'):
+            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
+            return self.get_pricing_and_complete_booking(state, conversation_id)
+        
+        # If we have all basic info but no price, get pricing
+        elif not state.get('price') and state.get('firstName') and state.get('postcode') and state.get('phone'):
+            print("🚀 HAVE ALL BASIC INFO - GETTING PRICING")
+            return self.get_pricing_and_ask(state, conversation_id)
         
         # If we have pricing, present it
         elif state.get('price'):
-            return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Collection within 72 hours standard. Level load requirement for skip collection. Driver calls when en route. 98% recycling rate. We have insured and licensed teams. Digital waste transfer notes provided. Would you like to book this?"
+            return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Collection within 72 hours standard. Would you like to book this?"
         
-        return "I can help you with skip hire. What information do you need?"
+        return "How can I help you with skip hire?"
 
 
 class MAVAgent(BaseAgent):
