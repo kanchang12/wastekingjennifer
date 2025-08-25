@@ -291,6 +291,9 @@ class BaseAgent:
         from datetime import datetime
         from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
+    def save_state(self, state, conversation_id):
+        self.conversations[conversation_id] = state
+
     def process_message(self, message, conversation_id="default"):
         """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES"""
         state = self.conversations.get(conversation_id, {})
