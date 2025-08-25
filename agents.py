@@ -633,8 +633,11 @@ class SkipAgent(BaseAgent):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
         elif not state.get('service'):
             state['service'] = 'skip'
+        elif not state.get('service'):
+            state['service'] = 'skip'
             if not state.get('type'):
                 state['type'] = '8yd'
+                
             self.conversations[conversation_id] = state
 
         # A2: HEAVY MATERIALS CHECK & MAN & VAN SUGGESTION - EXACT RULES
@@ -664,6 +667,11 @@ class SkipAgent(BaseAgent):
             self.conversations[conversation_id] = state
             if not state.get('type') or state.get('type') not in ['4yd', '6yd', '8yd', '12yd']:
                 return SKIP_HIRE_RULES['A3_size_location']['size_check']['unsure']
+
+        elif not state.get('waste_asked'):
+            state['waste_asked'] = True
+            self.conversations[conversation_id] = state
+            return SKIP_HIRE_RULES['waste']['waste_check]['not_mentioned']
 
         elif not state.get('location_asked'):
             state['location_asked'] = True
@@ -855,6 +863,11 @@ class MAVAgent(BaseAgent):
             state['parking_checked'] = True
             self.conversations[conversation_id] = state
             return f"{MAV_RULES['B4_access_critical']['questions'][1]} {MAV_RULES['B4_access_critical']['always_mention']}"
+
+        elif not state.get('waste_asked'):
+            state['waste_asked'] = True
+            self.conversations[conversation_id] = state
+            return SKIP_HIRE_RULES['waste']['waste_check]['not_mentioned']
         
         elif not state.get('stairs_checked'):
             state['stairs_checked'] = True
