@@ -357,7 +357,7 @@ class BaseAgent:
                 found_waste.append(keyword)
         
         if found_waste:
-            state['waste_type'] = True
+            waste_found = 'yes'
             data['waste_type'] = ', '.join(found_waste)
             print(f"✅ Extracted waste type: {data['waste_type']}")
 
@@ -643,9 +643,11 @@ class SkipAgent(BaseAgent):
             self.conversations[conversation_id] = state
             return SKIP_HIRE_RULES['A2_heavy_materials']['question']
         
-        elif not state.get('materials_assessed') and state.get('waste_content_asked'):
-            state['materials_assessed'] = True
-            self.conversations[conversation_id] = state
+        elif not state.get('materials_assessed') or state.get('waste_content_asked'):
+            if state['materials_assessed']:
+                self.conversations[conversation_id] = state
+            else:
+                self.conversations[conversation_id] = state
             
             # Check for heavy materials with 12yd skip
             if state.get('type') == '12yd' and any(heavy in message.lower() for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore']):
