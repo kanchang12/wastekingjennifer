@@ -156,7 +156,7 @@ MAV_RULES = {
             'described': 'Don\'t ask again',
             'not_clear': "How much waste do you have approximately?"
         },
-        'exact_script': "We charge by the cubic yard at £30 per yard for light waste.",
+        'exact_script': "We charge by the cubic yard",
         'weight_allowances': [
             "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos",
             "The majority of our collections are done under our generous weight allowances"
