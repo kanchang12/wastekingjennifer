@@ -293,14 +293,13 @@ class BaseAgent:
             if len(postcode) >= 5:
                 data['postcode'] = postcode
                 print(f"✅ Extracted complete postcode: {data['postcode']}")
-            else:
-                print(f"⚠️ Incomplete postcode detected: {postcode}")
 
         phone_match = re.search(r'\b(\d{10,11})\b', message)
         if phone_match:
             data['phone'] = phone_match.group(1)
             print(f"✅ Extracted phone: {data['phone']}")
 
+        # Extract names
         if 'kanchen' in message_lower:
             data['firstName'] = 'Kanchen'
             print(f"✅ Extracted name: Kanchen")
@@ -317,6 +316,46 @@ class BaseAgent:
                     data['firstName'] = name_match.group(1).strip().title()
                     print(f"✅ Extracted name: {data['firstName']}")
                     break
+
+        # Extract waste type information
+        if any(waste in message_lower for waste in ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper']):
+            waste_types = []
+            if 'plastic' in message_lower:
+                waste_types.append('plastic')
+            if 'household' in message_lower:
+                waste_types.append('household')
+            if 'furniture' in message_lower:
+                waste_types.append('furniture')
+            if 'clothes' in message_lower:
+                waste_types.append('clothes')
+            if 'books' in message_lower:
+                waste_types.append('books')
+            if 'toys' in message_lower:
+                waste_types.append('toys')
+            if 'cardboard' in message_lower:
+                waste_types.append('cardboard')
+            if 'paper' in message_lower:
+                waste_types.append('paper')
+            
+            if waste_types:
+                data['waste_type'] = ', '.join(waste_types)
+                print(f"✅ Extracted waste type: {data['waste_type']}")
+
+        # Extract location information
+        location_phrases = [
+            'in the garage', 'in garage', 'garage',
+            'in the garden', 'garden', 'back garden', 'front garden',
+            'in the house', 'inside', 'indoors',
+            'outside', 'outdoors', 'on the drive', 'driveway',
+            'easy access', 'easy to access', 'accessible',
+            'ground floor', 'upstairs', 'basement'
+        ]
+        for phrase in location_phrases:
+            if phrase in message_lower:
+                data['location'] = message.strip()
+                print(f"✅ Extracted location: {data['location']}")
+                break
+
         return data
 
     def should_book(self, message):
@@ -684,7 +723,7 @@ class MAVAgent(BaseAgent):
         return data
 
     def get_next_response(self, message, state, conversation_id):
-        """FOLLOW ORIGINAL BOOKING FLOW + ADD BUSINESS RULE QUESTIONS"""
+        """ORIGINAL WORKING FLOW WITH PROPER STATE MANAGEMENT"""
         wants_to_book = self.should_book(message)
 
         # If user wants to book and we have pricing, complete booking immediately
@@ -692,7 +731,7 @@ class MAVAgent(BaseAgent):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
 
-        # ORIGINAL BASIC INFO GATHERING
+        # STEP 1: Basic info (original working logic)
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -700,85 +739,71 @@ class MAVAgent(BaseAgent):
         elif not state.get('service'):
             # Auto-set service type for MAV
             state['service'] = 'mav'
-            if not state.get('type'):
-                state['type'] = '4yd'  # Default
+            state['type'] = '4yd'  # Default
             self.conversations[conversation_id] = state
         
-        # BUSINESS RULE QUESTIONS FROM PDF (B2: HEAVY MATERIALS CHECK)
-        elif not state.get('heavy_materials_asked'):
-            state['heavy_materials_asked'] = True
+        # STEP 2: Heavy materials check (B2 from PDF)
+        elif not state.get('heavy_materials_checked'):
+            state['heavy_materials_checked'] = True
             self.conversations[conversation_id] = state
             return "Do you have soil, rubble, bricks, concrete, or tiles?"
         
-        # Check if they said yes to heavy materials
-        elif message.lower() in ['yes', 'yeah', 'yep'] and state.get('heavy_materials_asked') and not state.get('heavy_materials_handled'):
-            state['heavy_materials_handled'] = True
-            self.conversations[conversation_id] = state
-            return "For heavy materials with man & van service, let me put you through to our specialist team for the best solution."
-        
-        # B3: VOLUME ASSESSMENT & WEIGHT LIMITS
-        elif not state.get('waste_type_asked'):
-            state['waste_type_asked'] = True
-            self.conversations[conversation_id] = state
+        # STEP 3: Waste type (B3 from PDF) 
+        elif not state.get('waste_type'):
             return "What type of waste do you have?"
         
-        elif not state.get('volume_explained'):
-            state['volume_explained'] = True
+        # STEP 4: Volume assessment (B3 continued)
+        elif not state.get('volume_assessed'):
+            state['volume_assessed'] = True  
             self.conversations[conversation_id] = state
             return "We charge by the cubic yard at £30 per yard for light waste. We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos. How much waste do you have approximately? Think in terms of washing machine loads or black bags."
         
-        # B4: ACCESS ASSESSMENT (CRITICAL)
-        elif not state.get('location_asked'):
-            state['location_asked'] = True
-            self.conversations[conversation_id] = state
+        # STEP 5: Location access (B4 from PDF)
+        elif not state.get('location'):
             return "Where is the waste located and how easy is it to access?"
         
-        elif not state.get('parking_asked'):
-            state['parking_asked'] = True
+        # STEP 6: Parking access (B4 continued)  
+        elif not state.get('parking_checked'):
+            state['parking_checked'] = True
             self.conversations[conversation_id] = state
             return "Can we park on the driveway or close to the waste?"
         
-        elif not state.get('stairs_asked'):
-            state['stairs_asked'] = True
+        # STEP 7: Stairs check (B4 critical)
+        elif not state.get('stairs_checked'):
+            state['stairs_checked'] = True
             self.conversations[conversation_id] = state
             return "Are there any stairs involved? We have insured and licensed teams."
         
-        # Check if stairs mentioned - transfer if needed
-        elif 'stair' in message.lower() and state.get('stairs_asked') and not state.get('stairs_handled'):
-            state['stairs_handled'] = True
-            self.conversations[conversation_id] = state
-            return "For collections involving stairs, let me put you through to our team for proper assessment."
-        
-        elif not state.get('distance_asked'):
-            state['distance_asked'] = True
+        # STEP 8: Distance check (B4 final)
+        elif not state.get('distance_checked'):
+            state['distance_checked'] = True
             self.conversations[conversation_id] = state
             return "How far is our parking from the waste?"
         
-        # B5: ADDITIONAL ITEMS & TIMING
-        elif not state.get('additional_items_asked'):
-            state['additional_items_asked'] = True
+        # STEP 9: Additional items (B5 from PDF)
+        elif not state.get('additional_items_checked'):
+            state['additional_items_checked'] = True
             self.conversations[conversation_id] = state
             return "Is there anything else you need removing while we're on site? Any fridges, mattresses, or upholstered furniture?"
         
-        elif not state.get('timing_asked'):
-            state['timing_asked'] = True
+        # STEP 10: Timing (B5 continued)
+        elif not state.get('timing_checked'):
+            state['timing_checked'] = True
             self.conversations[conversation_id] = state
             return "When do you need this collection? We can't guarantee exact times, but collection is typically between 7am-6pm."
         
+        # STEP 11: Phone number (final step before pricing)
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
         
         # ORIGINAL BOOKING FLOW CONTINUES
-        # If user wants to book but we don't have price yet, get price and complete booking
         elif wants_to_book and not state.get('price'):
             print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
             return self.get_pricing_and_complete_booking(state, conversation_id)
         
-        # If we have all data but no price yet, get pricing
         elif not state.get('price'):
             return self.get_pricing_and_ask(state, conversation_id)
         
-        # If we have pricing, ask to book
         elif state.get('price'):
             return f"💰 {state['type']} man & van at {state['postcode']}: {state['price']}. We allow generous labour time and 95% of all our jobs are done within the time frame. Although if the collection goes over our labour time, there is a £19 charge per 15 minutes. Would you like to book this?"
 
