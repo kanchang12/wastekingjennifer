@@ -595,6 +595,59 @@ class SkipAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         """FOLLOW ORIGINAL BOOKING FLOW + ADD BUSINESS RULE QUESTIONS"""
         wants_to_book = self.should_book(message)
+        message_lower = message.lower()
+        
+        # CAPTURE USER ANSWERS AND STORE IN STATE
+        # Capture name if provided in any message
+        if not state.get('firstName') and any(word in message for word in ['name is', 'my name', 'i am', 'i\'m']):
+            name_match = re.search(r'(?:name is|my name|i am|i\'m)\s+([A-Z][a-z]+)', message, re.IGNORECASE)
+            if name_match:
+                state['firstName'] = name_match.group(1)
+        
+        # Capture phone if provided in any message
+        if not state.get('phone'):
+            phone_match = re.search(r'\b(\d{10,11})\b', message)
+            if phone_match:
+                state['phone'] = phone_match.group(1)
+        
+        # Capture postcode if provided in any message
+        if not state.get('postcode'):
+            postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
+            if postcode_match:
+                postcode = postcode_match.group(1).replace(' ', '')
+                if len(postcode) >= 5:
+                    state['postcode'] = postcode
+        
+        # Capture waste content answer
+        if state.get('waste_content_asked') and not state.get('materials_assessed'):
+            state['waste_content'] = message
+            if any(heavy in message_lower for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore', 'stone', 'tile']):
+                state['has_heavy_materials'] = True
+            else:
+                state['has_heavy_materials'] = False
+        
+        # Capture location answer
+        if state.get('location_asked') and not state.get('permit_handled'):
+            state['location_details'] = message
+            if any(road in message_lower for road in ['road', 'street', 'outside', 'front', 'pavement', 'highway', 'public']):
+                state['needs_permit'] = True
+            else:
+                state['needs_permit'] = False
+        
+        # Capture prohibited items answer
+        if state.get('prohibited_items_asked'):
+            state['prohibited_items'] = message
+            if any(item in message_lower for item in ['fridge', 'freezer', 'mattress', 'sofa', 'upholstered', 'couch']):
+                state['has_surcharge_items'] = True
+            else:
+                state['has_surcharge_items'] = False
+        
+        # Capture timing answer
+        if state.get('timing_asked'):
+            state['delivery_timing'] = message
+        
+        # Save the updated state
+        self.conversations[conversation_id] = state
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
@@ -624,10 +677,10 @@ class SkipAgent(BaseAgent):
             state['materials_assessed'] = True
             self.conversations[conversation_id] = state
             # Check if 12 yard skip with heavy materials
-            if state.get('type') == '12yd' and any(heavy in message.lower() for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore']):
+            if state.get('type') == '12yd' and state.get('has_heavy_materials'):
                 return "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller."
             # MAN & VAN SUGGESTION for 8yd or smaller with light materials
-            elif state.get('type') in ['8yd', '6yd', '4yd'] and not any(heavy in message.lower() for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore']):
+            elif state.get('type') in ['8yd', '6yd', '4yd'] and not state.get('has_heavy_materials'):
                 return "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
 
         # A3: SKIP SIZE & LOCATION
@@ -643,9 +696,8 @@ class SkipAgent(BaseAgent):
             return "Will the skip go on your driveway or on the road?"
         
         # Check if road placement - MANDATORY PERMIT SCRIPT
-        elif not state.get('permit_handled') and any(road in message.lower() for road in ['road', 'street', 'outside', 'front', 'pavement']):
+        elif not state.get('permit_handled') and state.get('needs_permit'):
             state['permit_handled'] = True
-            state['needs_permit'] = True
             self.conversations[conversation_id] = state
             return "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe. Are there any parking bays where the skip will go?"
         
@@ -698,7 +750,7 @@ class SkipAgent(BaseAgent):
 
 
 class MAVAgent(BaseAgent):
-    def __init__(self, rules_processor):
+    def __init__(self, rules_processor=None):
         super().__init__(rules_processor)
         self.service_type = 'mav'
         self.service_name = 'man & van'
@@ -725,6 +777,74 @@ class MAVAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         """ORIGINAL WORKING FLOW WITH PROPER STATE MANAGEMENT"""
         wants_to_book = self.should_book(message)
+        message_lower = message.lower()
+        
+        # CAPTURE USER ANSWERS AND STORE IN STATE
+        # Capture basic info from any message
+        if not state.get('firstName') and any(word in message for word in ['name is', 'my name', 'i am', 'i\'m']):
+            name_match = re.search(r'(?:name is|my name|i am|i\'m)\s+([A-Z][a-z]+)', message, re.IGNORECASE)
+            if name_match:
+                state['firstName'] = name_match.group(1)
+        
+        if not state.get('phone'):
+            phone_match = re.search(r'\b(\d{10,11})\b', message)
+            if phone_match:
+                state['phone'] = phone_match.group(1)
+        
+        if not state.get('postcode'):
+            postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
+            if postcode_match:
+                postcode = postcode_match.group(1).replace(' ', '')
+                if len(postcode) >= 5:
+                    state['postcode'] = postcode
+        
+        # Capture heavy materials answer
+        if state.get('heavy_materials_checked'):
+            if any(heavy in message_lower for heavy in ['soil', 'rubble', 'brick', 'concrete', 'tile', 'stone']):
+                state['has_heavy_materials'] = True
+            else:
+                state['has_heavy_materials'] = False
+        
+        # Capture waste type answer
+        if not state.get('waste_type') and state.get('heavy_materials_checked'):
+            state['waste_type'] = message
+        
+        # Capture volume answer
+        if state.get('volume_assessed'):
+            state['waste_volume'] = message
+        
+        # Capture location answer
+        if not state.get('location') and state.get('volume_assessed'):
+            state['location'] = message
+        
+        # Capture parking answer
+        if state.get('parking_checked'):
+            state['parking_details'] = message
+        
+        # Capture stairs answer
+        if state.get('stairs_checked'):
+            if any(word in message_lower for word in ['stairs', 'staircase', 'upstairs', 'steps', 'flight']):
+                state['has_stairs'] = True
+            else:
+                state['has_stairs'] = False
+        
+        # Capture distance answer
+        if state.get('distance_checked'):
+            state['distance_details'] = message
+        
+        # Capture additional items answer
+        if state.get('additional_items_checked'):
+            if any(item in message_lower for item in ['fridge', 'freezer', 'mattress', 'sofa', 'upholstered']):
+                state['has_additional_items'] = True
+            else:
+                state['has_additional_items'] = False
+        
+        # Capture timing answer
+        if state.get('timing_checked'):
+            state['collection_timing'] = message
+        
+        # Save the updated state
+        self.conversations[conversation_id] = state
 
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
@@ -811,7 +931,7 @@ class MAVAgent(BaseAgent):
 
 
 class GrabAgent(BaseAgent):
-    def __init__(self, rules_processor):
+    def __init__(self, rules_processor=None):
         super().__init__(rules_processor)
         self.service_type = 'grab'
         self.service_name = 'grab hire'
@@ -841,7 +961,50 @@ class GrabAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         """FOLLOW ORIGINAL BOOKING FLOW + ADD BUSINESS RULE QUESTIONS"""
         wants_to_book = self.should_book(message)
-
+        message_lower = message.lower()
+        
+        # CAPTURE USER ANSWERS AND STORE IN STATE
+        # Capture basic info from any message
+        if not state.get('firstName') and any(word in message for word in ['name is', 'my name', 'i am', 'i\'m']):
+            name_match = re.search(r'(?:name is|my name|i am|i\'m)\s+([A-Z][a-z]+)', message, re.IGNORECASE)
+            if name_match:
+                state['firstName'] = name_match.group(1)
+        
+        if not state.get('phone'):
+            phone_match = re.search(r'\b(\d{10,11})\b', message)
+            if phone_match:
+                state['phone'] = phone_match.group(1)
+        
+        if not state.get('postcode'):
+            postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
+            if postcode_match:
+                postcode = postcode_match.group(1).replace(' ', '')
+                if len(postcode) >= 5:
+                    state['postcode'] = postcode
+        
+        # Capture waste type answer
+        if state.get('waste_type_asked'):
+            state['waste_type'] = message
+            if any(material in message_lower for material in ['soil', 'rubble', 'muckaway', 'hardcore']):
+                state['has_soil_rubble'] = True
+            if any(material in message_lower for material in ['wood', 'metal', 'plastic', 'furniture', 'concrete', 'bricks']):
+                state['has_other_materials'] = True
+        
+        # Capture quantity answer
+        if state.get('quantity_asked'):
+            state['material_quantity'] = message
+        
+        # Capture access answer
+        if state.get('access_asked'):
+            state['access_details'] = message
+        
+        # Capture timing answer
+        if state.get('timing_asked'):
+            state['collection_timing'] = message
+        
+        # Save the updated state
+        self.conversations[conversation_id] = state
+        
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
@@ -872,12 +1035,12 @@ class GrabAgent(BaseAgent):
             return "How much material do you have approximately?"
 
         # C2: GRAB SIZE UNDERSTANDING (EXACT SCRIPTS)
-        elif not state.get('grab_size_explained') and ('wheeler' in message.lower()):
+        elif not state.get('grab_size_explained') and ('wheeler' in message_lower):
             state['grab_size_explained'] = True
             self.conversations[conversation_id] = state
-            if '8-wheeler' in message.lower() or '8 wheeler' in message.lower():
+            if '8-wheeler' in message_lower or '8 wheeler' in message_lower:
                 return "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry."
-            elif '6-wheeler' in message.lower() or '6 wheeler' in message.lower():
+            elif '6-wheeler' in message_lower or '6 wheeler' in message_lower:
                 return "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
 
         # C3: MATERIALS ASSESSMENT
@@ -885,17 +1048,14 @@ class GrabAgent(BaseAgent):
             state['materials_assessed'] = True
             self.conversations[conversation_id] = state
             
-            # Check for mixed materials
-            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'hardcore', 'dirt', 'earth'])
-            has_other_materials = any(material in message.lower() for material in ['wood', 'metal', 'plastic', 'furniture', 'concrete', 'bricks'])
-            
-            if has_soil_rubble and has_other_materials:
+            # Check for mixed materials using captured state
+            if state.get('has_soil_rubble') and state.get('has_other_materials'):
                 return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
-            elif not has_soil_rubble and has_other_materials:
+            elif not state.get('has_soil_rubble') and state.get('has_other_materials'):
                 return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
 
         # Check for wait & load skip mention
-        elif 'wait' in message.lower() and 'load' in message.lower() and not state.get('wait_load_handled'):
+        elif 'wait' in message_lower and 'load' in message_lower and not state.get('wait_load_handled'):
             state['wait_load_handled'] = True
             self.conversations[conversation_id] = state
             return "For wait & load skips, let me put you through to our specialist who will check availability & costs."
