@@ -67,6 +67,11 @@ SKIP_HIRE_RULES = {
             'mentioned': 'Use it, don\'t ask again',
             'not_mentioned': "Will the skip go on your driveway or on the road?"
         },
+        'waste_asked': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What waste you will use?"
+
+        }
         'road_placement': 'MANDATORY PERMIT SCRIPT',
         'driveway': 'No permit needed, continue'
     },
