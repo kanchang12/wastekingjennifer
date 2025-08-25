@@ -128,7 +128,7 @@ def process_message():
             return jsonify({"success": False, "message": "No data provided"}), 400
         
         customer_message = data.get('customerquestion', '').strip()
-        conversation_id = data.get('elevenlabs_conversation_id', f"conv_{int(datetime.now().timestamp())}")
+        conversation_id = f"conv_{int(datetime.now().timestamp())}"
         
         print(f"📩 Message: {customer_message}")
         print(f"🆔 Conversation: {conversation_id}")
