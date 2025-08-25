@@ -161,7 +161,7 @@ Check amount:
 - Customer described amount? Don't ask again
 - Amount not clear? "How much waste do you have approximately?"
 
-SAY EXACTLY: "We charge by the cubic yard at £30 per yard for light waste."
+SAY EXACTLY: "We charge by the cubic yard at £30 per yard for light waste. but when customer asks for price, call the API tool to get exact price"
 
 WEIGHT ALLOWANCES:
 - "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos"
