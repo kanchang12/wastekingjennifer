@@ -71,7 +71,7 @@ SKIP_HIRE_RULES = {
             'mentioned': 'Use it, don\'t ask again',
             'not_mentioned': "What waste you will use?"
 
-        }
+        },
         'road_placement': 'MANDATORY PERMIT SCRIPT',
         'driveway': 'No permit needed, continue'
     },
