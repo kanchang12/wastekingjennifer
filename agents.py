@@ -349,13 +349,15 @@ class BaseAgent:
                         break
 
         # Extract waste type information - FOLLOW WASTE TYPE RULES
-        waste_keywords = ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'soil', 'rubble', 'concrete', 'tiles']
+        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'soil', 'rubble', 'concrete', 'tiles']
         found_waste = []
+        
         for keyword in waste_keywords:
             if keyword in message_lower:
                 found_waste.append(keyword)
         
         if found_waste:
+            state['waste_type'] = True
             data['waste_type'] = ', '.join(found_waste)
             print(f"✅ Extracted waste type: {data['waste_type']}")
 
