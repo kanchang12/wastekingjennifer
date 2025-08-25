@@ -676,7 +676,7 @@ class SkipAgent(BaseAgent):
         elif not state.get('waste_asked'):
             state['waste_asked'] = True
             self.conversations[conversation_id] = state
-            return SKIP_HIRE_RULES['waste']['waste_check]['not_mentioned']
+            return SKIP_HIRE_RULES['waste']['waste_check']['not_mentioned']
 
         elif not state.get('location_asked'):
             state['location_asked'] = True
