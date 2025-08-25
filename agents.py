@@ -406,24 +406,13 @@ class BaseAgent:
         return True  # ALWAYS MAKE SALES - NO OFFICE HOURS RESTRICTIONS
 
     def needs_transfer(self, price):
-        """TRANSFER RULES - EXACT IMPLEMENTATION"""
+        """Check if transfer is needed based on service and price"""
         if self.service_type == 'skip':
-            return False  # SKIP HIRE: NO LIMIT - NEVER TRANSFER - ALWAYS BOOK
-        
+            return False  # Skip hire: no limit, never transfer
         elif self.service_type == 'mav' and price >= 500:
-            if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
-                return False
-            print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £500+ MAV")
-            return True
-            
+            return True   # MAV: transfer needed for £500+
         elif self.service_type == 'grab' and price >= 300:
-            if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
-                return False
-            print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £300+ GRAB")
-            return True
-            
+            return True   # Grab: transfer needed for £300+
         return False
 
     def validate_postcode_with_customer(self, current_postcode):
