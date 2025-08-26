@@ -67,6 +67,11 @@ SKIP_HIRE_RULES = {
             'mentioned': 'Use it, don\'t ask again',
             'not_mentioned': "Will the skip go on your driveway or on the road?"
         },
+        'waste_asked': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What waste you will use?"
+
+        },
         'road_placement': 'MANDATORY PERMIT SCRIPT',
         'driveway': 'No permit needed, continue'
     },
@@ -288,11 +293,6 @@ SURCHARGE_ITEMS = {
 class BaseAgent:
     def __init__(self, rules_processor=None):
         self.conversations = {}  # Store conversation state
-        from datetime import datetime
-        from utils.wasteking_api import complete_booking, create_booking, get_pricing
-
-    def save_state(self, state, conversation_id):
-        self.conversations[conversation_id] = state
 
     def process_message(self, message, conversation_id="default"):
         """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES"""
@@ -307,11 +307,30 @@ class BaseAgent:
         state.update(new_data)
         print(f"🔄 MERGED STATE: {state}")
 
+        # Save state immediately
         self.conversations[conversation_id] = state
 
         # Get next response following ALL RULES
         response = self.get_next_response(message, state, conversation_id)
+        
+        # Save state again after processing
+        self.conversations[conversation_id] = state
+        
         return response
+
+    def check_completion_status(self, state):
+        """Track what we have and what we need"""
+        completion = {
+            'name': 'yes' if state.get('firstName') else 'no',
+            'address': 'yes' if state.get('postcode') else 'no', 
+            'service': 'yes' if state.get('service') else 'no',
+            'phone': 'yes' if state.get('phone') else 'no'
+        }
+        
+        all_ready = all(status == 'yes' for status in completion.values())
+        print(f"📋 COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
+        
+        return completion, all_ready
 
     def extract_data(self, message):
         """EXTRACT ALL CUSTOMER DATA - FOLLOW EXTRACTION RULES"""
@@ -339,6 +358,7 @@ class BaseAgent:
         else:
             name_patterns = [
                 r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+                r'[Cc]ustomer\s+(?:name\s+)?(?:is\s+)?([A-Z][a-z]+)',
                 r'^([A-Z][a-z]+)\s+(?:wants|needs)',
                 r'^([A-Z][a-z]+),',
                 r'for\s+([A-Z][a-z]+),',
@@ -354,8 +374,9 @@ class BaseAgent:
                         break
 
         # Extract waste type information - FOLLOW WASTE TYPE RULES
-        waste_keywords = ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'soil', 'rubble', 'concrete', 'tiles']
+        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'soil', 'rubble', 'concrete', 'tiles']
         found_waste = []
+        
         for keyword in waste_keywords:
             if keyword in message_lower:
                 found_waste.append(keyword)
@@ -407,8 +428,18 @@ class BaseAgent:
         return any(word in message_lower for word in positive_words)
 
     def is_business_hours(self):
-        """RULE: ALWAYS RETURN TRUE - NO OFFICE HOURS BLOCKING FOR SALES"""
-        return True  # ALWAYS MAKE SALES - NO OFFICE HOURS RESTRICTIONS
+        """Check if it's business hours"""
+        now = datetime.now()
+        day_of_week = now.weekday()  # 0=Monday, 6=Sunday
+        hour = now.hour
+        
+        if day_of_week < 4:  # Monday-Thursday
+            return 8 <= hour < 17
+        elif day_of_week == 4:  # Friday
+            return 8 <= hour < 16
+        elif day_of_week == 5:  # Saturday
+            return 9 <= hour < 12
+        return False  # Sunday closed
 
     def needs_transfer(self, price):
         """Check if transfer is needed based on service and price"""
@@ -462,9 +493,9 @@ class BaseAgent:
                 if payment_link and state.get('phone'):
                     self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
                 
-                response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
+                response = f"Booking confirmed! Ref: {booking_ref}, Price: {price}"
                 if payment_link:
-                    response += f"\n💳 Payment link sent to your phone: {payment_link}"
+                    response += f" Payment link sent to your phone: {payment_link}"
                 
                 return response
             else:
@@ -564,13 +595,19 @@ class BaseAgent:
                 state['booking_ref'] = booking_ref
                 self.conversations[conversation_id] = state
                 
-                # Check if needs transfer - BUT SKIP HIRE NEVER TRANSFERS
+                # Apply transfer logic correctly
                 if self.needs_transfer(price_num):
-                    print("🔄 TRANSFER NEEDED")
-                    return "For this size job, let me put you through to our specialist team for the best service."
-                
-                print("✅ PRESENTING PRICE TO USER")
-                return f"💰 {state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
+                    # Only check office hours if transfer is actually needed
+                    if self.is_business_hours():
+                        print("🔄 TRANSFER NEEDED - OFFICE HOURS")
+                        return "For this size job, let me put you through to our specialist team for the best service."
+                    else:
+                        print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
+                        return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
+                else:
+                    # No transfer needed - make the sale directly (no office hours check)
+                    print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
+                    return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
                 print("❌ ZERO PRICE RETURNED")
                 return self.validate_postcode_with_customer(state.get('postcode'))
@@ -591,9 +628,11 @@ class SkipAgent(BaseAgent):
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
+        
         if any(word in message_lower for word in ['skip', 'skip hire']):
             data['service'] = 'skip'
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
+            
+            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']):
                 data['type'] = '8yd'
             elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
                 data['type'] = '6yd'
@@ -603,28 +642,39 @@ class SkipAgent(BaseAgent):
                 data['type'] = '12yd'
             else:
                 data['type'] = '8yd'  # Default
+                
         return data
 
     def get_next_response(self, message, state, conversation_id):
+        """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY"""
         wants_to_book = self.should_book(message)
-
-        def mark(key, value=True):
-            state[key] = value
-            self.save_state(state, conversation_id)
-
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
+        
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
 
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing_and_ask(state, conversation_id)
+
+        # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
             return TRANSFER_RULES['management_director']['out_of_hours']
 
+        # Check for complaints
         if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
             return TRANSFER_RULES['complaints']['out_of_hours']
 
+        # Check for specialist services
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
+        # A1: INFORMATION GATHERING SEQUENCE
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -633,86 +683,21 @@ class SkipAgent(BaseAgent):
             state['service'] = 'skip'
             if not state.get('type'):
                 state['type'] = '8yd'
-            self.save_state(state, conversation_id)
-        elif not state.get('waste_content_asked'):
-            mark('waste_content_asked')
-            return SKIP_HIRE_RULES['A2_heavy_materials']['question']
-        elif not state.get('materials_assessed') and state.get('waste_content_asked'):
-            mark('materials_assessed')
-            if state.get('type') == '12yd' and any(heavy in message.lower() for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore']):
-                return SKIP_HIRE_RULES['A2_heavy_materials']['12yd_heavy_response']
-            elif (state.get('type') in ['8yd', '6yd', '4yd'] and not any(heavy in message.lower() for heavy in ['concrete', 'soil', 'brick', 'rubble', 'hardcore'])):
-                return SKIP_HIRE_RULES['A2_heavy_materials']['man_van_suggestion']['script']
-        elif not state.get('skip_size_confirmed'):
-            mark('skip_size_confirmed')
-            if not state.get('type') or state.get('type') not in ['4yd', '6yd', '8yd', '12yd']:
-                return SKIP_HIRE_RULES['A3_size_location']['size_check']['unsure']
-        elif not state.get('location_asked'):
-            mark('location_asked')
-            return SKIP_HIRE_RULES['A3_size_location']['location_check']['not_mentioned']
-        elif not state.get('permit_handled') and any(road in message.lower() for road in ['road', 'street', 'outside', 'front', 'pavement']):
-            mark('permit_handled')
-            state['needs_permit'] = True
-            self.save_state(state, conversation_id)
-            return f"{SKIP_HIRE_RULES['permit_script']['exact_words']} {SKIP_HIRE_RULES['permit_script']['questions'][0]}"
-        elif state.get('needs_permit') and not state.get('parking_restrictions_asked'):
-            mark('parking_restrictions_asked')
-            return SKIP_HIRE_RULES['permit_script']['questions'][1]
-        elif state.get('needs_permit') and not state.get('parking_final_check'):
-            mark('parking_final_check')
-            return SKIP_HIRE_RULES['permit_script']['questions'][2]
-        elif not state.get('access_asked'):
-            mark('access_asked')
-            return f"{SKIP_HIRE_RULES['A4_access']['question']} {SKIP_HIRE_RULES['A4_access']['followup']} {SKIP_HIRE_RULES['A4_access']['critical']}"
-        elif not state.get('prohibited_items_asked'):
-            mark('prohibited_items_asked')
-            return f"{SKIP_HIRE_RULES['A5_prohibited_items']['question']} Do you have fridges, freezers, mattresses, or upholstered furniture? These items have additional charges."
-        elif not state.get('prohibited_checked'):
-            mark('prohibited_checked')
-            if 'plasterboard' in message.lower():
-                return SKIP_HIRE_RULES['A5_prohibited_items']['transfer_required']['plasterboard']
-            elif any(item in message.lower() for item in ['gas cylinder', 'paint', 'chemical']):
-                return SKIP_HIRE_RULES['A5_prohibited_items']['transfer_required']['gas_cylinders']
-            elif 'asbestos' in message.lower():
-                return "Asbestos requires specialist handling. Our team will call you back to arrange safe removal."
-            elif 'tyre' in message.lower():
-                return SKIP_HIRE_RULES['A5_prohibited_items']['transfer_required']['tyres']
-        elif not state.get('timing_asked'):
-            mark('timing_asked')
-            return f"When do you need this delivered? {SKIP_HIRE_RULES['A6_timing']['exact_script']}"
+            self.conversations[conversation_id] = state
+
+        # If we have basic info but missing phone, ask for it
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
-        elif not state.get('surcharges_calculated'):
-            surcharges = 0
-            surcharge_items = []
-            if any(fridge in message.lower() for fridge in ['fridge', 'freezer']):
-                surcharges += SURCHARGE_ITEMS['fridges_freezers']
-                surcharge_items.append(f"fridge/freezer (+£{SURCHARGE_ITEMS['fridges_freezers']})")
-            if 'mattress' in message.lower():
-                surcharges += SURCHARGE_ITEMS['mattresses']
-                surcharge_items.append(f"mattress (+£{SURCHARGE_ITEMS['mattresses']})")
-            if any(furniture in message.lower() for furniture in ['sofa', 'chair', 'upholstered']):
-                surcharges += SURCHARGE_ITEMS['upholstered_furniture']
-                surcharge_items.append(f"furniture (+£{SURCHARGE_ITEMS['upholstered_furniture']})")
-            state['surcharges'] = surcharges
-            state['surcharge_items'] = surcharge_items
-            mark('surcharges_calculated')
-        elif wants_to_book and not state.get('price'):
-            return self.get_pricing_and_complete_booking(state, conversation_id)
-        elif not state.get('price'):
-            return self.get_pricing_and_ask(state, conversation_id)
-        elif state.get('price'):
-            base_price = float(str(state['price']).replace('£', '').replace(',', ''))
-            total_surcharges = state.get('surcharges', 0)
-            final_price = base_price + total_surcharges
-            response = f"💰 {state['type']} skip hire at {state['postcode']}: £{final_price:.2f} including VAT"
-            if total_surcharges > 0:
-                response += f" (base £{base_price:.2f} + £{total_surcharges} surcharges for {', '.join(state.get('surcharge_items', []))})"
-            response += f". {' '.join(SKIP_HIRE_RULES['A7_quote']['always_include'])}"
-            response += " Would you like to book this?"
-            return response
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing_and_ask(state, conversation_id)
+            elif state.get('price'):
+                return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
         return "How can I help you with skip hire?"
+
 
 class MAVAgent(BaseAgent):
     """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6"""
@@ -725,26 +710,43 @@ class MAVAgent(BaseAgent):
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
+
         if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
             data['service'] = 'mav'
             data['type'] = '4yd'  # Default
+
         return data
 
     def get_next_response(self, message, state, conversation_id):
+        """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
         wants_to_book = self.should_book(message)
-
-        def mark(key, value=True):
-            state[key] = value
-            self.save_state(state, conversation_id)
-
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
+        
+        # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
+
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing_and_ask(state, conversation_id)
+
+        # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
             return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
         if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
             return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # B1: INFORMATION GATHERING
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
@@ -752,79 +754,19 @@ class MAVAgent(BaseAgent):
         elif not state.get('service'):
             state['service'] = 'mav'
             state['type'] = '4yd'
-            self.save_state(state, conversation_id)
-        elif not state.get('heavy_materials_checked'):
-            mark('heavy_materials_checked')
-            return MAV_RULES['B2_heavy_materials']['question']
-        elif not state.get('heavy_materials_assessed') and state.get('heavy_materials_checked'):
-            mark('heavy_materials_assessed')
-            if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'brick', 'concrete', 'tiles', 'hardcore']):
-                return MAV_RULES['B2_heavy_materials']['if_yes']['out_of_hours']
-        elif not state.get('waste_type'):
-            return "What type of waste do you have?"
-        elif not state.get('volume_assessed'):
-            mark('volume_assessed')
-            response = f"{MAV_RULES['B3_volume_assessment']['exact_script']} "
-            response += f"{MAV_RULES['B3_volume_assessment']['weight_allowances'][0]}. "
-            response += f"{MAV_RULES['B3_volume_assessment']['weight_allowances'][1]}. "
-            response += f"{MAV_RULES['B3_volume_assessment']['labour_time'][0]}. "
-            response += f"{MAV_RULES['B3_volume_assessment']['labour_time'][1]}. "
-            response += f"How much waste do you have approximately? {MAV_RULES['B3_volume_assessment']['if_unsure']} {MAV_RULES['B3_volume_assessment']['reference']}"
-            return response
-        elif not state.get('location_access_asked'):
-            mark('location_access_asked')
-            return MAV_RULES['B4_access_critical']['questions'][0]
-        elif not state.get('parking_checked'):
-            mark('parking_checked')
-            return f"{MAV_RULES['B4_access_critical']['questions'][1]} {MAV_RULES['B4_access_critical']['always_mention']}"
-        elif not state.get('stairs_checked'):
-            mark('stairs_checked')
-            if any(stairs in message.lower() for stairs in ['stairs', 'upstairs', 'flat', 'apartment', 'floor']):
-                return MAV_RULES['B4_access_critical']['stairs_flats_apartments']['out_of_hours']
-            return MAV_RULES['B4_access_critical']['questions'][2]
-        elif not state.get('distance_checked'):
-            mark('distance_checked')
-            return MAV_RULES['B4_access_critical']['questions'][3]
-        elif not state.get('additional_items_checked'):
-            mark('additional_items_checked')
-            return MAV_RULES['B5_additional_timing']['question']
-        elif not state.get('timing_checked'):
-            mark('timing_checked')
-            if 'sunday' in message.lower():
-                return MAV_RULES['B5_additional_timing']['sunday_collections']['script']
-            return f"When do you need this collection? {MAV_RULES['B5_additional_timing']['script']}"
+            self.conversations[conversation_id] = state
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
-        elif not state.get('surcharges_calculated'):
-            surcharges = 0
-            surcharge_items = []
-            if any(fridge in message.lower() for fridge in ['fridge', 'freezer']):
-                surcharges += MAV_RULES['B5_additional_timing']['prohibited_items']['fridges_freezers']['charge']
-                surcharge_items.append(f"fridge/freezer (+£{MAV_RULES['B5_additional_timing']['prohibited_items']['fridges_freezers']['charge']})")
-            if 'mattress' in message.lower():
-                surcharges += MAV_RULES['B5_additional_timing']['prohibited_items']['mattresses']['charge']
-                surcharge_items.append(f"mattress (+£{MAV_RULES['B5_additional_timing']['prohibited_items']['mattresses']['charge']})")
-            if any(furniture in message.lower() for furniture in ['sofa', 'chair', 'upholstered']):
-                surcharges += MAV_RULES['B5_additional_timing']['prohibited_items']['upholstered_furniture']['charge']
-                surcharge_items.append(f"furniture (+£{MAV_RULES['B5_additional_timing']['prohibited_items']['upholstered_furniture']['charge']})")
-            state['surcharges'] = surcharges
-            state['surcharge_items'] = surcharge_items
-            mark('surcharges_calculated')
-        elif wants_to_book and not state.get('price'):
-            return self.get_pricing_and_complete_booking(state, conversation_id)
-        elif not state.get('price'):
-            return self.get_pricing_and_ask(state, conversation_id)
-        elif state.get('price'):
-            base_price = float(str(state['price']).replace('£', '').replace(',', ''))
-            total_surcharges = state.get('surcharges', 0)
-            final_price = base_price + total_surcharges
-            response = f"💰 {state['type']} man & van at {state['postcode']}: £{final_price:.2f}"
-            if total_surcharges > 0:
-                response += f" (base £{base_price:.2f} + £{total_surcharges} surcharges for {', '.join(state.get('surcharge_items', []))})"
-            response += f". {MAV_RULES['B3_volume_assessment']['labour_time'][0]} {MAV_RULES['B3_volume_assessment']['labour_time'][1]} Would you like to book this?"
-            return response
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing_and_ask(state, conversation_id)
+            elif state.get('price'):
+                return f"{state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
 
         return "How can I help you with man & van service?"
+
 
 class GrabAgent(BaseAgent):
     """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5"""
@@ -837,81 +779,63 @@ class GrabAgent(BaseAgent):
     def extract_data(self, message):
         data = super().extract_data(message)
         message_lower = message.lower()
+
         if any(word in message_lower for word in ['grab', 'grab hire']):
             data['service'] = 'grab'
             data['type'] = '6yd'  # Default
+        # If no specific service mentioned, default to grab
+        elif not data.get('service'):
+            data['service'] = 'grab'
+            data['type'] = '6yd'
+
         return data
 
     def get_next_response(self, message, state, conversation_id):
+        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY"""
         wants_to_book = self.should_book(message)
-
-        def mark(key, value=True):
-            state[key] = value
-            self.save_state(state, conversation_id)
-
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
+        
+        # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking_proper(state)
+
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing_and_ask(state, conversation_id)
+
+        # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
             return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
         if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
             return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
-        mandatory_fields = GRAB_RULES['C1_mandatory_info']['mandatory_fields']
-        for field_info in mandatory_fields:
-            field = field_info['field']
-            question = field_info['question']
-            if field == 'name' and not state.get('firstName'):
-                return question
-            elif field == 'phone' and not state.get('phone'):
-                return question
-            elif field == 'postcode' and not state.get('postcode'):
-                return question
-            elif field == 'waste_type' and not state.get('waste_type_asked'):
-                mark('waste_type_asked')
-                return question
-            elif field == 'quantity' and not state.get('quantity_asked'):
-                mark('quantity_asked')
-                return question
-
-        if not state.get('service'):
+        # C1: MANDATORY INFORMATION GATHERING
+        if not state.get('firstName'):
+            return "Can I take your name please?"
+        elif not state.get('phone'):
+            return "What's the best phone number to contact you on?"
+        elif not state.get('postcode'):
+            return "What's the postcode where you need the grab lorry?"
+        elif not state.get('service'):
             state['service'] = 'grab'
-            if not state.get('type'):
-                state['type'] = '6yd'
-            self.save_state(state, conversation_id)
-        elif not state.get('grab_size_explained') and any(wheeler in message.lower() for wheeler in ['8-wheeler', '8 wheeler', '6-wheeler', '6 wheeler']):
-            mark('grab_size_explained')
-            if '8-wheeler' in message.lower() or '8 wheeler' in message.lower():
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['8_wheeler']
-            elif '6-wheeler' in message.lower() or '6 wheeler' in message.lower():
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['6_wheeler']
-        elif not state.get('materials_assessed') and state.get('waste_type_asked'):
-            mark('materials_assessed')
-            if 'wait' in message.lower() and 'load' in message.lower():
-                return GRAB_RULES['C3_materials_assessment']['wait_load_skip']['immediate_response']
-            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'hardcore', 'dirt', 'earth'])
-            has_other_materials = any(material in message.lower() for material in ['wood', 'metal', 'plastic', 'furniture', 'concrete', 'bricks'])
-            if (has_soil_rubble and has_other_materials) or (not has_soil_rubble and has_other_materials):
-                return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
-            # else: continue
-        elif not state.get('access_asked'):
-            mark('access_asked')
-            return GRAB_RULES['C4_access_timing']['access_question']
-        elif not state.get('timing_asked'):
-            mark('timing_asked')
-            return "When do you need this collection?"
-        elif wants_to_book and not state.get('price'):
-            return self.get_pricing_and_complete_booking(state, conversation_id)
-        elif not state.get('price'):
-            return self.get_pricing_and_ask(state, conversation_id)
-        elif state.get('price'):
-            price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-            if price_num == 0 or price_num > 500:
-                return GRAB_RULES['C3_materials_assessment']['pricing_issues']['zero_unrealistic']['response']
-            if price_num >= 300:
-                return f"💰 {state['type']} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
-            else:
-                return f"💰 {state['type']} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+            state['type'] = '6yd'
+            self.conversations[conversation_id] = state
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing_and_ask(state, conversation_id)
+            elif state.get('price'):
+                return f"{state.get('type', '6yd')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
         return "How can I help you with grab hire?"
