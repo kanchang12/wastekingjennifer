@@ -20,30 +20,17 @@ def get_next_conversation_id():
     conversation_counter += 1
     return f"conv{conversation_counter:08d}"  # conv00000001, conv00000002, etc.
 
-# Create a mock rules processor to satisfy agent constructors
-class MockRulesProcessor:
-    """Mock rules processor that always returns default responses"""
-    def process_rules(self, *args, **kwargs):
-        return None
-    
-    def get_office_hours(self):
-        return "9 AM to 5 PM Monday to Friday"
-    
-    def is_office_hours(self):
-        return True
-
-mock_rules = MockRulesProcessor()
 
 # Initialize agents with shared conversation storage
 shared_conversations = {}
 
-skip_agent = SkipAgent(mock_rules)
+skip_agent = SkipAgent()
 skip_agent.conversations = shared_conversations
 
-mav_agent = MAVAgent(mock_rules)  
+mav_agent = MAVAgent()  
 mav_agent.conversations = shared_conversations
 
-grab_agent = GrabAgent(mock_rules)
+grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 
 print("✅ All agents initialized with shared conversation storage")
