@@ -724,7 +724,21 @@ class MAVAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
-        wants_to_book = self.should_book(message)
+        # Check for booking request with payment link
+        wants_to_book = any(phrase in message.lower() for phrase in [
+            'payment link', 'send payment', 'book', 'confirm', 'proceed', 'yes',
+            'checkout', 'complete booking', 'finish booking', 'place order',
+            'make booking', 'create booking', 'reserve this', 'secure booking',
+            'finalize booking', 'i want to book', 'ready to book', 'lets book',
+            'book this', 'book it', 'send me the link', 'complete order',
+            'go ahead', 'arrange this', 'schedule this', 'do it',
+            'make it happen', 'sort this out', 'wrap this up', 'submit booking',
+            'accept', 'agree', 'sounds good', 'that works', 'perfect',
+            'alright', 'okay', 'ok', 'sure', 'absolutely', 'yep', 'yeah'
+        ])
+        
+        if wants_to_book and state.get('price'):
+            return self.complete_booking_proper(state)
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
@@ -769,8 +783,7 @@ class MAVAgent(BaseAgent):
                 return self.get_pricing_and_ask(state, conversation_id)
             elif state.get('price'):
                 response = self.get_pricing_and_ask(state, conversation_id)
-                if "book this?" in response:
-                    # Auto-complete booking instead of asking
+                if wants_to_book and state.get('price'):
                     return self.complete_booking_proper(state)
         return response
 
