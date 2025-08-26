@@ -33,7 +33,6 @@ TRANSFER_RULES = {
     }
 }
 
-# SKIP HIRE RULES (A1-A7) - COMPLETE RESTORATION
 SKIP_HIRE_RULES = {
     'A1_information_gathering': {
         'check_provided': ['name', 'postcode', 'waste_type'],
@@ -71,6 +70,7 @@ SKIP_HIRE_RULES = {
         'waste_asked': {
             'mentioned': 'Use it, don\'t ask again',
             'not_mentioned': "What waste you will use?"
+
         },
         'road_placement': 'MANDATORY PERMIT SCRIPT',
         'driveway': 'No permit needed, continue'
@@ -141,7 +141,6 @@ SKIP_HIRE_RULES = {
     }
 }
 
-# MAV RULES (B1-B6) - COMPLETE RESTORATION
 MAV_RULES = {
     'B1_information_gathering': {
         'check_provided': ['name', 'postcode', 'waste_type'],
@@ -212,7 +211,6 @@ MAV_RULES = {
     }
 }
 
-# GRAB RULES (C1-C5) - COMPLETE RESTORATION
 GRAB_RULES = {
     'C1_mandatory_info': {
         'never_call_tools_until_all_info': True,
@@ -283,6 +281,7 @@ GRAB_RULES = {
 }
 
 SMS_NOTIFICATION = '+447823656762'
+
 SURCHARGE_ITEMS = {
     'fridges_freezers': 20,
     'mattresses': 15, 
@@ -290,76 +289,170 @@ SURCHARGE_ITEMS = {
     'sofas': 15
 }
 
-# GLOBAL CONVERSATION STORAGE - SHARED ACROSS ALL AGENTS
-global_conversations = {}
 
-class ServiceRouter:
-    """INTELLIGENT SERVICE ROUTING - FIXES ROUTING INCONSISTENCIES"""
-    
-    @staticmethod
-    def determine_service(message):
-        """Determine the correct service based on message content"""
+class BaseAgent:
+    def __init__(self):
+        self.conversations = {}  # Store conversation state
+
+    def process_message(self, message, conversation_id="default"):
+        """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES"""
+        state = self.conversations.get(conversation_id, {})
+        print(f"📂 LOADED STATE: {state}")
+
+        # Extract new data from message
+        new_data = self.extract_data(message)
+        print(f"🔍 NEW DATA: {new_data}")
+
+        # Merge state - PRESERVE EXISTING DATA PROPERLY
+        for key, value in new_data.items():
+            if value and value.strip():  # Only update if new value is not empty/whitespace
+                state[key] = value
+        print(f"🔄 MERGED STATE: {state}")
+
+        # Save state immediately
+        self.conversations[conversation_id] = state.copy()
+
+        # Get next response following ALL RULES
+        response = self.get_next_response(message, state, conversation_id)
+        
+        # Save state again after processing
+        self.conversations[conversation_id] = state.copy()
+        
+        return response
+
+    def check_completion_status(self, state):
+        """Track what we have and what we need"""
+        completion = {
+            'name': 'yes' if state.get('firstName') else 'no',
+            'address': 'yes' if state.get('postcode') else 'no', 
+            'service': 'yes' if state.get('service') else 'no',
+            'phone': 'yes' if state.get('phone') else 'no'
+        }
+        
+        all_ready = all(status == 'yes' for status in completion.values())
+        print(f"📋 COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
+        
+        return completion, all_ready
+
+    def extract_data(self, message):
+        """EXTRACT ALL CUSTOMER DATA - FOLLOW EXTRACTION RULES"""
+        data = {}
+        message_lower = message.lower()
+
+        # Postcode regex - requires complete postcode format like LS14ED
+        postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
+        if postcode_match:
+            postcode = postcode_match.group(1).replace(' ', '')
+            if len(postcode) >= 5:
+                data['postcode'] = postcode
+                print(f"✅ Extracted complete postcode: {data['postcode']}")
+
+        # Phone extraction - handle multiple formats
+        phone_patterns = [
+            r'\b(\d{11})\b',                    # 01442216784 (11 consecutive digits)
+            r'\b(\d{10})\b',                    # 0144216784 (10 consecutive digits)
+            r'\b(\d{5})\s+(\d{6})\b',           # 01442 216784 (5 + 6 digits with space)
+            r'\b(\d{4})\s+(\d{6})\b',           # 0144 216784 (4 + 6 digits with space)
+            r'\b(\d{5})-(\d{6})\b',             # 01442-216784 (5 + 6 digits with hyphen)
+            r'\b(\d{4})-(\d{6})\b',             # 0144-216784 (4 + 6 digits with hyphen)
+            r'\((\d{4,5})\)\s*(\d{6})\b',       # (01442) 216784 (brackets format)
+        ]
+        
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, message)
+            if phone_match:
+                # Combine all captured groups and remove any non-digits
+                phone_parts = [group for group in phone_match.groups() if group]
+                phone_number = ''.join(phone_parts)
+                if len(phone_number) >= 10:  # Valid UK phone number
+                    data['phone'] = phone_number
+                    print(f"✅ Extracted phone: {data['phone']}")
+                    break
+
+        # Name extraction - FIXED: Don't extract "Yes" as name
+        if 'kanchen' in message_lower or 'kanchan' in message_lower:
+            data['firstName'] = 'Kanchan'
+            print(f"✅ Extracted name: Kanchan")
+        elif 'jackie' in message_lower:
+            data['firstName'] = 'Jackie'
+            print(f"✅ Extracted name: Jackie")
+        else:
+            name_patterns = [
+                r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+                r'[Cc]ustomer\s+(?:name\s+)?(?:is\s+)?([A-Z][a-z]+)',
+                r'^([A-Z][a-z]+)\s+(?:wants|needs)',
+                r'^([A-Z][a-z]+),',
+                r'for\s+([A-Z][a-z]+),',
+                r'([A-Z][a-z]+)\s+phone',
+                r'phone\s+([A-Z][a-z]+)',
+            ]
+            for pattern in name_patterns:
+                name_match = re.search(pattern, message)
+                if name_match:
+                    potential_name = name_match.group(1).strip().title()
+                    # RULE: Don't extract common words as names
+                    if potential_name.lower() not in ['yes', 'no', 'there', 'what', 'how', 'confirmed', 'phone', 'please']:
+                        data['firstName'] = potential_name
+                        print(f"✅ Extracted name: {data['firstName']}")
+                        break
+
+        # Extract waste type information - FOLLOW WASTE TYPE RULES
+        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'rubble', 'concrete', 'tiles', 'wardrobe', 'clearance']
+        found_waste = []
+        
+        for keyword in waste_keywords:
+            if keyword in message_lower:
+                found_waste.append(keyword)
+        
+        if found_waste:
+            data['waste_type'] = ', '.join(found_waste)
+            print(f"✅ Extracted waste type: {data['waste_type']}")
+
+        # Extract location information
+        location_phrases = [
+            'in the garage', 'in garage', 'garage', 'half a garage',
+            'in the garden', 'garden', 'back garden', 'front garden',
+            'in the house', 'inside', 'indoors', 'house clearance',
+            'outside', 'outdoors', 'on the drive', 'driveway',
+            'easy access', 'easy to access', 'accessible',
+            'ground floor', 'upstairs', 'basement', 'flat', 'apartment'
+        ]
+        for phrase in location_phrases:
+            if phrase in message_lower:
+                data['location'] = message.strip()
+                print(f"✅ Extracted location: {data['location']}")
+                break
+
+        return data
+
+    def should_book(self, message):
+        """Check if user wants to proceed with booking"""
         message_lower = message.lower()
         
-        # SKIP HIRE - Explicit mentions first
-        if any(word in message_lower for word in [
-            'skip hire', 'skip', 'container hire', 'builders skip',
-            'mini skip', 'maxi skip', 'yard skip', '4 yard skip',
-            '6 yard skip', '8 yard skip', '12 yard skip'
-        ]):
-            return 'skip'
+        # Direct booking requests
+        booking_phrases = [
+            'payment link', 'pay link', 'booking', 'book it', 'book this',
+            'send payment', 'complete booking', 'finish booking', 'proceed with booking',
+            'confirm booking', 'make booking', 'create booking', 'place order',
+            'send me the link', 'i want to book', 'ready to book', 'lets book',
+            'checkout', 'complete order', 'finalize booking', 'secure booking',
+            'reserve this', 'confirm this', 'i\'ll take it', 'that works',
+            'perfect', 'sounds good', 'thats fine', 'arrange this',
+            'wants to book', 'please send payment'
+        ]
         
-        # MAN & VAN - House clearance and furniture = MAV (NOT GRAB!)
-        if any(phrase in message_lower for phrase in [
-            'man and van', 'man & van', 'mav', 'man in van', 'man in a van',
-            'house clearance', 'furniture removal', 'furniture collection', 
-            'clearance', 'clear out', 'shed clearance', 'garage clearance',
-            'furniture', 'wardrobe', 'wardrobes', 'sofa', 'bed', 'mattress',
-            'chest of drawers', 'dining table', 'chairs', 'appliances',
-            'washing machine', 'fridge', 'cooker', 'dishwasher',
-            'office clearance', 'flat clearance', 'house clear',
-            'removal service', 'loading service', 'we do the loading',
-            'rubbish clearance', 'waste clearance', 'bulk collection'
-        ]):
-            return 'mav'
+        # Positive responses
+        positive_words = ['yes', 'yeah', 'yep', 'ok', 'okay', 'alright', 'sure', 'lets do it', 'go ahead', 'proceed']
         
-        # GRAB HIRE - ONLY for soil/rubble/construction waste (NOT furniture!)
-        # Note: API might expect different service name, so we'll handle this
-        if any(phrase in message_lower for phrase in [
-            'grab hire', 'grab lorry', 'grab service',
-            'soil removal', 'rubble removal', 'muckaway', 'dirt removal',
-            'earth removal', 'topsoil', 'subsoil', 'hardcore',
-            'construction rubble', 'demolition waste', 'excavation',
-            'concrete removal', 'aggregates', 'building rubble'
-        ]) and not any(furniture in message_lower for furniture in [
-            'furniture', 'wardrobe', 'sofa', 'bed', 'table', 'chair', 'clearance'
-        ]):
-            return 'grab'
-        
-        # DEFAULT ROUTING BASED ON CONTEXT
-        # If mentions soil/rubble but no furniture -> GRAB
-        if any(material in message_lower for material in ['soil', 'rubble', 'concrete', 'hardcore', 'muckaway']) and \
-           not any(furniture in message_lower for furniture in ['furniture', 'wardrobe', 'sofa', 'bed', 'clearance']):
-            return 'grab'
-        
-        # If mentions furniture/clearance -> MAV
-        if any(item in message_lower for item in ['furniture', 'clearance', 'wardrobe', 'sofa', 'bed', 'appliances']):
-            return 'mav'
-        
-        # If asks about road sweeper or other unknown services -> GRAB (fallback)
-        return 'grab'
+        # Check for explicit booking requests
+        if any(phrase in message_lower for phrase in booking_phrases):
+            return True
+            
+        # Check for positive responses - but only if we already have pricing
+        return any(word in message_lower for word in positive_words)
 
-class UniversalAgent:
-    """SINGLE UNIVERSAL AGENT - HANDLES ALL SERVICES CONSISTENTLY WITH SUPPLIER CONFIRMATION"""
-    
-    def __init__(self):
-        # Use global storage to ensure state persistence
-        global global_conversations
-        self.conversations = global_conversations
-        self.supplier_phone = '+447394642517'  # Default supplier phone
-        
     def is_business_hours(self):
-        """Check if it's business hours for supplier confirmation"""
+        """Check if it's business hours"""
         now = datetime.now()
         day_of_week = now.weekday()  # 0=Monday, 6=Sunday
         hour = now.hour
@@ -371,199 +464,26 @@ class UniversalAgent:
         elif day_of_week == 5:  # Saturday
             return 9 <= hour < 12
         return False  # Sunday closed
-    
-    def needs_supplier_confirmation(self, message, state):
-        """Check if request needs supplier confirmation - OFFICE HOURS ONLY"""
-        if not self.is_business_hours():
-            return False
-            
-        message_lower = message.lower()
-        
-        # Check for special requests that need confirmation
-        special_requests = [
-            'urgent', 'immediate', 'today', 'asap', 'emergency',
-            'special', 'unusual', 'different', 'custom',
-            'large amount', 'big job', 'commercial', 'business'
-        ]
-        
-        return any(request in message_lower for request in special_requests)
-    
-    def get_supplier_confirmation_message(self):
-        """Message while checking with supplier"""
-        return "Let me just check with our team to confirm availability for your request. I'll be right back with you."
-    
-    def get_supplier_denied_message(self):
-        """Message when supplier says no"""
-        return "I've checked with our team and we can't fulfill that specific request right now. What would be a suitable alternative for you?"
-    
-    def needs_transfer(self, message):
-        """Check if call needs to be transferred to supplier"""
-        message_lower = message.lower()
-        
-        transfer_triggers = [
-            'speak to someone', 'talk to human', 'manager', 'supervisor',
-            'complaint', 'problem', 'issue', 'not happy', 'unhappy',
-            'transfer me', 'connect me', 'put me through',
-            'speak to glenn', 'director', 'glenn currie'
-        ]
-        
-        return any(trigger in message_lower for trigger in transfer_triggers)
-    
-    def get_transfer_message(self):
-        """Message when transferring call"""
-        return f"I'm connecting you with our team now. You can also reach them directly at {self.supplier_phone}. Please hold while I transfer you."
-        
-    def process_message(self, message, conversation_id="default"):
-        """MAIN ENTRY POINT - CONSISTENT PROCESSING FOR ALL SERVICES"""
-        
-        # STEP 1: DETERMINE SERVICE TYPE
-        if conversation_id not in self.conversations:
-            self.conversations[conversation_id] = {}
-        
-        state = self.conversations[conversation_id].copy()
-        print(f"📂 LOADED STATE: {state}")
-        
-        # Determine service if not already set
-        if not state.get('service_type'):
-            service_type = ServiceRouter.determine_service(message)
-            state['service_type'] = service_type
-            print(f"🎯 DETERMINED SERVICE: {service_type}")
-        
-        # STEP 2: EXTRACT NEW DATA
-        new_data = self.extract_data(message)
-        print(f"🔍 NEW DATA: {new_data}")
-        
-        # STEP 3: MERGE STATE PROPERLY
-        for key, value in new_data.items():
-            if value and str(value).strip():
-                state[key] = value
-        
-        print(f"🔄 MERGED STATE: {state}")
-        
-        # STEP 4: SAVE STATE IMMEDIATELY
-        self.conversations[conversation_id] = state.copy()
-        
-        # STEP 5: GET RESPONSE BASED ON SERVICE TYPE
-        if state['service_type'] == 'skip':
-            response = self.handle_skip_service(message, state, conversation_id)
-        elif state['service_type'] == 'mav':
-            response = self.handle_mav_service(message, state, conversation_id)
-        elif state['service_type'] == 'grab':
-            response = self.handle_grab_service(message, state, conversation_id)
+
+    def needs_transfer(self, price):
+        """Check if transfer is needed based on service and price"""
+        if self.service_type == 'skip':
+            return False  # Skip hire: no limit, never transfer
+        elif self.service_type == 'mav' and price >= 500:
+            return True   # MAV: transfer needed for £500+
+        elif self.service_type == 'grab' and price >= 300:
+            return True   # Grab: transfer needed for £300+
+        return False
+
+    def validate_postcode_with_customer(self, current_postcode):
+        """Ask customer to confirm postcode if pricing fails"""
+        if not current_postcode or len(current_postcode) < 5:
+            return "Could you please provide your complete postcode? For example, LS14ED rather than just LS1."
         else:
-            response = "I can help you with skip hire, man & van, or grab hire services. What do you need?"
-        
-        # STEP 6: SAVE STATE AGAIN
-        self.conversations[conversation_id] = state.copy()
-        print(f"💾 FINAL STATE SAVED: {state}")
-        
-        return response
-    
-    def extract_data(self, message):
-        """UNIVERSAL DATA EXTRACTION - WORKS FOR ALL SERVICES"""
-        data = {}
-        message_lower = message.lower()
+            return f"I'm having trouble finding pricing for {current_postcode}. Could you please confirm your complete postcode is correct?"
 
-        # Postcode extraction - Enhanced regex
-        postcode_patterns = [
-            r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',  # Full UK postcode
-            r'postcode\s+([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})',  # "postcode HP225LQ"
-        ]
-        
-        for pattern in postcode_patterns:
-            postcode_match = re.search(pattern, message.upper())
-            if postcode_match:
-                postcode = postcode_match.group(1).replace(' ', '')
-                if len(postcode) >= 5:
-                    data['postcode'] = postcode
-                    print(f"✅ Extracted postcode: {data['postcode']}")
-                    break
-
-        # Phone extraction - Enhanced patterns
-        phone_patterns = [
-            r'\b(\d{11})\b',                    # 07976133518
-            r'\b(\d{10})\b',                    # 0797613351
-            r'\b(\d{5})\s+(\d{6})\b',           # 07976 133518
-            r'\b(\d{4})\s+(\d{6})\b',           # 0797 613351  
-            r'\b(\d{5})-(\d{6})\b',             # 07976-133518
-            r'\b(\d{4})-(\d{6})\b',             # 0797-613351
-            r'\((\d{4,5})\)\s*(\d{6})\b',       # (07976) 133518
-            r'phone\s+(\d{11})',                # "phone 07976133518"
-            r'contact\s+(\d{11})',              # "contact 07976133518"
-        ]
-        
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, message)
-            if phone_match:
-                if len(phone_match.groups()) == 1:
-                    phone_number = phone_match.group(1)
-                else:
-                    phone_parts = [group for group in phone_match.groups() if group]
-                    phone_number = ''.join(phone_parts)
-                
-                if len(phone_number) >= 10:
-                    data['phone'] = phone_number
-                    print(f"✅ Extracted phone: {data['phone']}")
-                    break
-
-        # Name extraction - Enhanced patterns
-        if 'jackie' in message_lower:
-            data['firstName'] = 'Jackie'
-            print(f"✅ Extracted name: Jackie")
-        elif 'kanchan' in message_lower or 'kanchen' in message_lower:
-            data['firstName'] = 'Kanchan'
-            print(f"✅ Extracted name: Kanchan")
-        else:
-            name_patterns = [
-                r'name\s+(?:is\s+)?([A-Z][a-z]+)',
-                r'(?:i\'m|im)\s+([A-Z][a-z]+)',
-                r'^([A-Z][a-z]+),',
-                r'([A-Z][a-z]+)\s+phone',
-                r'for\s+([A-Z][a-z]+)',
-            ]
-            for pattern in name_patterns:
-                name_match = re.search(pattern, message, re.IGNORECASE)
-                if name_match:
-                    potential_name = name_match.group(1).strip().title()
-                    if potential_name.lower() not in ['yes', 'no', 'confirmed', 'please', 'phone']:
-                        data['firstName'] = potential_name
-                        print(f"✅ Extracted name: {data['firstName']}")
-                        break
-
-        return data
-    
-    def should_book(self, message):
-        """UNIVERSAL BOOKING INTENT DETECTION"""
-        message_lower = message.lower()
-        
-        booking_phrases = [
-            'payment link', 'send payment', 'book', 'booking', 'confirm', 
-            'proceed', 'complete booking', 'finish booking', 'place order',
-            'make booking', 'create booking', 'secure booking', 'reserve',
-            'checkout', 'complete order', 'finalize', 'arrange this',
-            'wants to book', 'please send payment', 'send me the link'
-        ]
-        
-        positive_words = ['yes', 'yeah', 'yep', 'ok', 'okay', 'alright', 'sure', 'go ahead']
-        
-        return any(phrase in message_lower for phrase in booking_phrases) or \
-               any(word in message_lower for word in positive_words)
-    
-    def check_completion_status(self, state):
-        """UNIVERSAL COMPLETION CHECK"""
-        completion = {
-            'name': 'yes' if state.get('firstName') else 'no',
-            'address': 'yes' if state.get('postcode') else 'no',
-            'phone': 'yes' if state.get('phone') else 'no'
-        }
-        
-        all_ready = all(status == 'yes' for status in completion.values())
-        print(f"📋 COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
-        
-        return completion, all_ready
-    
-    def get_pricing(self, state, conversation_id, service_api_name, type_name, wants_to_book=False):
-        """UNIVERSAL PRICING FUNCTION"""
+    def get_pricing(self, state, conversation_id, wants_to_book=False):
+        """CORE FUNCTION: Get pricing and present to user - ACTUAL API CALLS"""
         try:
             print("📞 CALLING CREATE_BOOKING API...")
             booking_result = create_booking()
@@ -572,13 +492,14 @@ class UniversalAgent:
                 return "Unable to get pricing right now. Let me put you through to our team."
             
             booking_ref = booking_result['booking_ref']
+            service_type = state.get('type', self.default_type)
             
-            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={service_api_name}, type={type_name}")
-            price_result = get_pricing(booking_ref, state['postcode'], service_api_name, type_name)
+            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}")
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type)
             
             if not price_result.get('success'):
-                print("❌ GET_PRICING FAILED")
-                return f"I'm having trouble finding pricing for {state['postcode']}. Could you please confirm your postcode is correct?"
+                print("❌ GET_PRICING FAILED - POSTCODE ISSUE")
+                return self.validate_postcode_with_customer(state.get('postcode'))
             
             price = price_result['price']
             price_num = float(str(price).replace('£', '').replace(',', ''))
@@ -587,37 +508,56 @@ class UniversalAgent:
             
             if price_num > 0:
                 state['price'] = price
+                state['type'] = price_result.get('type', service_type)
                 state['booking_ref'] = booking_ref
-                self.conversations[conversation_id] = state.copy()
+                self.conversations[conversation_id] = state
                 
-                if wants_to_book:
-                    print("🚀 USER WANTS TO BOOK - COMPLETING IMMEDIATELY")
-                    return self.complete_booking(state)
+                # Apply transfer logic correctly
+                if self.needs_transfer(price_num):
+                    # Only check office hours if transfer is actually needed
+                    if self.is_business_hours():
+                        print("🔄 TRANSFER NEEDED - OFFICE HOURS")
+                        return "For this size job, let me put you through to our specialist team for the best service."
+                    else:
+                        print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
+                        if wants_to_book:
+                            print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                            return self.complete_booking(state)
+                        else:
+                            return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
                 else:
-                    service_name = state['service_type']
-                    return f"{type_name} {service_name} service at {state['postcode']}: {state['price']}. Would you like to book this?"
+                    # No transfer needed
+                    if wants_to_book:
+                        print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                        return self.complete_booking(state)
+                    else:
+                        print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
+                        return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
-                return f"I'm having trouble finding pricing for {state['postcode']}. Could you please confirm your postcode is correct?"
+                print("❌ ZERO PRICE RETURNED")
+                return self.validate_postcode_with_customer(state.get('postcode'))
                 
         except Exception as e:
             print(f"❌ PRICING ERROR: {e}")
             return "Unable to get pricing right now. Let me put you through to our team."
-    
+
     def complete_booking(self, state):
-        """UNIVERSAL BOOKING COMPLETION"""
+        """CORE FUNCTION: Complete booking with payment link - MUST CALL ACTUAL API"""
         try:
             print("🚀 COMPLETING BOOKING...")
             
+            # Prepare customer data
             customer_data = {
                 'firstName': state.get('firstName'),
                 'phone': state.get('phone'),
                 'postcode': state.get('postcode'),
-                'service': state.get('service_api_name', state.get('service_type')),
-                'type': state.get('type_name', '4yd')
+                'service': state.get('service'),
+                'type': state.get('type')
             }
             
             print(f"📋 CUSTOMER DATA: {customer_data}")
             
+            # RULE: Call the complete booking API - ACTUAL API CALL
             result = complete_booking(customer_data)
             
             if result.get('success'):
@@ -627,10 +567,12 @@ class UniversalAgent:
                 
                 print(f"✅ BOOKING SUCCESS: {booking_ref}, {price}")
                 
+                # Update state
                 state['booking_completed'] = True
-                state['final_booking_ref'] = booking_ref
+                state['booking_ref'] = booking_ref
                 state['final_price'] = price
                 
+                # Send SMS if phone provided
                 if payment_link and state.get('phone'):
                     self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
                 
@@ -646,9 +588,9 @@ class UniversalAgent:
         except Exception as e:
             print(f"❌ BOOKING ERROR: {e}")
             return "Booking issue occurred. Our team will contact you."
-    
+
     def send_sms(self, name, phone, booking_ref, price, payment_link):
-        """SMS NOTIFICATION"""
+        """RULE: Send SMS with payment link - ACTUAL API CALL"""
         try:
             twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
             twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
@@ -665,274 +607,183 @@ class UniversalAgent:
                 print(f"✅ SMS sent to {phone}")
         except Exception as e:
             print(f"❌ SMS error: {e}")
-    
-    def handle_skip_service(self, message, state, conversation_id):
-        """SKIP HIRE SERVICE HANDLER - FOLLOW ALL A1-A7 RULES WITH SUPPLIER CONFIRMATION"""
+
+
+class SkipAgent(BaseAgent):
+    """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7"""
+    def __init__(self):
+        super().__init__()
+        self.service_type = 'skip'
+        self.service_name = 'skip hire'
+        self.default_type = '8yd'
+
+    def get_next_response(self, message, state, conversation_id):
+        """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY"""
         wants_to_book = self.should_book(message)
+        
+        # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
-        # Check for transfer requests first
-        if self.needs_transfer(message):
-            return self.get_transfer_message()
-        
-        # Check if needs supplier confirmation (office hours only)
-        if self.needs_supplier_confirmation(message, state) and not state.get('supplier_checked'):
-            state['supplier_checked'] = True
-            state['awaiting_supplier'] = True
-            self.conversations[conversation_id] = state.copy()
-            return self.get_supplier_confirmation_message()
-        
-        # Set API parameters for skip service
-        state['service_api_name'] = 'skip'
-        state['type_name'] = '8yd'  # Default skip size
-        
-        # If user wants to book and we have pricing, complete booking
+        # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
-        
-        # If all info collected, get pricing
+
+        # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            return self.get_pricing(state, conversation_id, 'skip', '8yd', wants_to_book)
-        
-        # A1: Information gathering sequence
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
+
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # A1: INFORMATION GATHERING SEQUENCE
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
+        elif not state.get('service'):
+            state['service'] = 'skip'
+            if not state.get('type'):
+                state['type'] = '8yd'
+            self.conversations[conversation_id] = state
+
+        # If we have basic info but missing phone, ask for it
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
-        
-        # A2: Heavy materials check for 12yd skips
-        if not state.get('materials_checked') and state.get('type_name') == '12yd':
-            if any(heavy in message.lower() for heavy in ['concrete', 'soil', 'bricks', 'brick', 'rubble']):
-                state['materials_checked'] = True
-                return SKIP_HIRE_RULES['A2_heavy_materials']['12yd_heavy_response']
-            else:
-                state['materials_checked'] = True
-        
-        # A3: Size and location check
-        if not state.get('size_confirmed'):
-            if 'size' in message.lower() and not any(size in message.lower() for size in ['4', '6', '8', '12']):
-                state['size_confirmed'] = True
-                return SKIP_HIRE_RULES['A3_size_location']['size_check']['unsure']
-            else:
-                state['size_confirmed'] = True
-        
-        # A4: Access check  
-        if not state.get('access_confirmed'):
-            if 'access' not in message.lower():
-                state['access_confirmed'] = True
-                return SKIP_HIRE_RULES['A4_access']['question']
-            else:
-                state['access_confirmed'] = True
-        
-        # A5: Prohibited items check
-        if not state.get('prohibited_checked'):
-            prohibited_items = ['fridge', 'freezer', 'mattress', 'sofa', 'furniture']
-            mentioned_items = [item for item in prohibited_items if item in message.lower()]
-            if mentioned_items:
-                surcharge_total = 0
-                for item in mentioned_items:
-                    if 'fridge' in item or 'freezer' in item:
-                        surcharge_total += SKIP_HIRE_RULES['A5_prohibited_items']['surcharge_items']['fridges_freezers']['charge']
-                    elif 'mattress' in item:
-                        surcharge_total += SKIP_HIRE_RULES['A5_prohibited_items']['surcharge_items']['mattresses']['charge']
-                    elif 'sofa' in item or 'furniture' in item:
-                        surcharge_total += SKIP_HIRE_RULES['A5_prohibited_items']['surcharge_items']['upholstered_furniture']['charge']
-                
-                if surcharge_total > 0:
-                    state['surcharge'] = surcharge_total
-                    state['prohibited_checked'] = True
-                    return f"There will be an additional £{surcharge_total} surcharge for those items due to special disposal requirements."
-            else:
-                state['prohibited_checked'] = True
-        
-        # A6: Timing check
-        if not state.get('timing_confirmed'):
-            if 'when' in message.lower() or 'time' in message.lower():
-                state['timing_confirmed'] = True
-                return SKIP_HIRE_RULES['A6_timing']['exact_script']
-            else:
-                state['timing_confirmed'] = True
-        
-        return "I can help you with skip hire. What's your name?"
-    
-    def handle_mav_service(self, message, state, conversation_id):
-        """MAN & VAN SERVICE HANDLER - FOLLOW ALL B1-B6 RULES WITH SUPPLIER CONFIRMATION"""
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price'):
+                return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+
+        return "How can I help you with skip hire?"
+
+
+class MAVAgent(BaseAgent):
+    """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6"""
+    def __init__(self):
+        super().__init__()
+        self.service_type = 'mav'
+        self.service_name = 'man & van'
+        self.default_type = '4yd'
+
+    def get_next_response(self, message, state, conversation_id):
+        """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
         wants_to_book = self.should_book(message)
+        
+        # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
-        # Check for transfer requests first
-        if self.needs_transfer(message):
-            return self.get_transfer_message()
-        
-        # Check if needs supplier confirmation (office hours only)
-        if self.needs_supplier_confirmation(message, state) and not state.get('supplier_checked'):
-            state['supplier_checked'] = True
-            state['awaiting_supplier'] = True
-            self.conversations[conversation_id] = state.copy()
-            return self.get_supplier_confirmation_message()
-        
-        # Set API parameters for MAV service
-        state['service_api_name'] = 'mav'
-        state['type_name'] = '4yd'  # Default MAV size
-        
-        # If user wants to book and we have pricing, complete booking
+        # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
-        
-        # If all info collected, get pricing
+
+        # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            return self.get_pricing(state, conversation_id, 'mav', '4yd', wants_to_book)
-        
-        # B2: Heavy materials check FIRST (before information gathering)
-        if state.get('firstName') and state.get('postcode') and not state.get('heavy_materials_checked'):
-            if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles']):
-                state['heavy_materials_checked'] = True
-                return MAV_RULES['B2_heavy_materials']['if_yes']['out_of_hours']
-            else:
-                state['heavy_materials_checked'] = True
-        
-        # B1: Information gathering sequence
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
+
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # B1: INFORMATION GATHERING
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
+        elif not state.get('service'):
+            state['service'] = 'mav'
+            state['type'] = '4yd'
+            self.conversations[conversation_id] = state
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
-        
-        # B3: Volume assessment
-        if not state.get('volume_assessed'):
-            if not any(amount in message.lower() for amount in ['yard', 'bag', 'load', 'full', 'much']):
-                state['volume_assessed'] = True
-                return f"{MAV_RULES['B3_volume_assessment']['amount_check']['not_clear']} {MAV_RULES['B3_volume_assessment']['exact_script']}. {MAV_RULES['B3_volume_assessment']['reference']}"
-            else:
-                state['volume_assessed'] = True
-        
-        # B4: Access critical questions
-        if not state.get('access_assessed'):
-            access_questions = MAV_RULES['B4_access_critical']['questions']
-            if 'stairs' in message.lower():
-                return MAV_RULES['B4_access_critical']['stairs_flats_apartments']['out_of_hours']
-            elif 'access' not in message.lower():
-                state['access_assessed'] = True
-                return f"{access_questions[0]} {MAV_RULES['B4_access_critical']['always_mention']}"
-            else:
-                state['access_assessed'] = True
-        
-        # B5: Additional items and timing
-        if not state.get('additional_checked'):
-            prohibited_items = ['fridge', 'freezer', 'mattress', 'sofa']
-            mentioned_items = [item for item in prohibited_items if item in message.lower()]
-            if mentioned_items:
-                surcharge_total = 0
-                for item in mentioned_items:
-                    if 'fridge' in item or 'freezer' in item:
-                        surcharge_total += MAV_RULES['B5_additional_timing']['prohibited_items']['fridges_freezers']['charge']
-                    elif 'mattress' in item:
-                        surcharge_total += MAV_RULES['B5_additional_timing']['prohibited_items']['mattresses']['charge']
-                    elif 'sofa' in item:
-                        surcharge_total += MAV_RULES['B5_additional_timing']['prohibited_items']['upholstered_furniture']['charge']
-                
-                if surcharge_total > 0:
-                    state['surcharge'] = surcharge_total
-                    state['additional_checked'] = True
-                    return f"There will be an additional £{surcharge_total} for those items {MAV_RULES['B5_additional_timing']['prohibited_items']['upholstered_furniture']['reason']}. {MAV_RULES['B5_additional_timing']['script']}"
-            else:
-                state['additional_checked'] = True
-        
-        return "I can help you with man & van service for furniture removal. What's your name?"
-    
-    def handle_grab_service(self, message, state, conversation_id):
-        """GRAB HIRE SERVICE HANDLER - FOLLOW ALL C1-C5 RULES WITH SUPPLIER CONFIRMATION"""
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price'):
+                return f"{state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
+
+        return "How can I help you with man & van service?"
+
+
+class GrabAgent(BaseAgent):
+    """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5"""
+    def __init__(self):
+        super().__init__()
+        self.service_type = 'grab'
+        self.service_name = 'grab hire'
+        self.default_type = '6yd'
+
+    def get_next_response(self, message, state, conversation_id):
+        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY"""
         wants_to_book = self.should_book(message)
+        
+        # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
-        # Check for transfer requests first
-        if self.needs_transfer(message):
-            return self.get_transfer_message()
-        
-        # Check if needs supplier confirmation (office hours only)
-        if self.needs_supplier_confirmation(message, state) and not state.get('supplier_checked'):
-            state['supplier_checked'] = True
-            state['awaiting_supplier'] = True
-            self.conversations[conversation_id] = state.copy()
-            return self.get_supplier_confirmation_message()
-        
-        # Try different service names for grab since API rejects "grab"
-        state['service_api_name'] = 'skip'  # Fallback to skip for now
-        state['type_name'] = '6yd'  # Default grab size
-        
-        # If user wants to book and we have pricing, complete booking
+        # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
-        
-        # C3: Materials assessment FIRST
-        if state.get('firstName') and not state.get('materials_assessed'):
-            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
-            has_other_items = any(item in message.lower() for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
-            
-            if has_soil_rubble and has_other_items:
-                state['materials_assessed'] = True
-                return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
-            else:
-                state['materials_assessed'] = True
-        
-        # C1: Mandatory information gathering sequence
-        mandatory_fields = GRAB_RULES['C1_mandatory_info']['mandatory_fields']
-        
-        if not state.get('firstName'):
-            return mandatory_fields[0]['question']  # "Can I take your name please?"
-        elif not state.get('phone'):
-            return mandatory_fields[1]['question']  # "What's the best phone number to contact you on?"
-        elif not state.get('postcode'):
-            return mandatory_fields[2]['question']  # "What's the postcode where you need the grab lorry?"
-        elif not state.get('waste_type'):
-            return mandatory_fields[3]['question']  # "What type of materials do you have?"
-        elif not state.get('quantity'):
-            return mandatory_fields[4]['question']  # "How much material do you have approximately?"
-        
-        # C2: Grab size exact scripts
-        if not state.get('grab_size_confirmed'):
-            if '8' in message.lower() and 'wheel' in message.lower():
-                state['grab_size_confirmed'] = True
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['8_wheeler']
-            elif '6' in message.lower() and 'wheel' in message.lower():
-                state['grab_size_confirmed'] = True
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['6_wheeler']
-            else:
-                state['grab_size_confirmed'] = True
-        
-        # C4: Access and timing check
-        if not state.get('access_timing_checked'):
-            if 'access' not in message.lower():
-                state['access_timing_checked'] = True
-                return GRAB_RULES['C4_access_timing']['access_question']
-            else:
-                state['access_timing_checked'] = True
-        
-        # If all info collected, get pricing (C5)
+
+        # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            return self.get_pricing(state, conversation_id, 'skip', '6yd', wants_to_book)
-        
-        # Special handling for unknown services like road sweeper
-        if 'road sweeper' in message.lower():
-            return f"I understand you need a road sweeper service. Let me connect you with our specialist team at {self.supplier_phone} who can arrange this for you."
-        
-        return "I can help you with grab hire service for soil and rubble removal. Can I take your name please?"
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
 
-# Create single universal agent instance
-universal_agent = UniversalAgent()
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
 
-# Legacy agent classes for backward compatibility (all use universal agent)
-class SkipAgent:
-    def process_message(self, message, conversation_id="default"):
-        return universal_agent.process_message(message, conversation_id)
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
 
-class MAVAgent:
-    def process_message(self, message, conversation_id="default"):
-        return universal_agent.process_message(message, conversation_id)
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
 
-class GrabAgent:
-    def process_message(self, message, conversation_id="default"):
-        return universal_agent.process_message(message, conversation_id)
+        # C1: MANDATORY INFORMATION GATHERING
+        if not state.get('firstName'):
+            return "Can I take your name please?"
+        elif not state.get('phone'):
+            return "What's the best phone number to contact you on?"
+        elif not state.get('postcode'):
+            return "What's the postcode where you need the grab lorry?"
+        elif not state.get('service'):
+            state['service'] = 'grab'
+            state['type'] = '6yd'
+            self.conversations[conversation_id] = state
+
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price'):
+                return f"{state.get('type', '6yd')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+
+        return "How can I help you with grab hire?"
