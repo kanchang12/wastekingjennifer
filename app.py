@@ -3,9 +3,6 @@ import json
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory
 
-# Import your existing rules processor
-
-
 # Import the simple agents
 from agents import SkipAgent, MAVAgent, GrabAgent
 
@@ -14,19 +11,16 @@ app = Flask(__name__)
 # Initialize system
 print("🚀 Initializing WasteKing Simple System...")
 
-# Load rules
-
-
 # Initialize agents with shared conversation storage
 shared_conversations = {}
 
-skip_agent = SkipAgent(rules_processor)
+skip_agent = SkipAgent()
 skip_agent.conversations = shared_conversations
 
-mav_agent = MAVAgent(rules_processor)  
+mav_agent = MAVAgent()  
 mav_agent.conversations = shared_conversations
 
-grab_agent = GrabAgent(rules_processor)
+grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 
 print("✅ All agents initialized with shared conversation storage")
@@ -86,7 +80,7 @@ def index():
         "features": [
             "FIXED 4-step WasteKing API booking with payment link creation",
             "FIXED agent routing - Grab handles everything except explicit skip/mav",
-            "Rules-based responses with office hours checks",
+            "Office hours checks implemented",
             "NO HARDCODED PRICES - ALL prices from real API",
             "SMS integration with Twilio"
         ],
@@ -223,7 +217,6 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "agents": ["Skip", "MAV", "Grab (DEFAULT MANAGER)"],
-        "rules_loaded": bool(rules_processor),
         "api_configured": bool(os.getenv('WASTEKING_ACCESS_TOKEN')),
         "routing_fixed": True,
         "payment_link_creation_fixed": True,
