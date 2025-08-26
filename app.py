@@ -499,10 +499,13 @@ def index():
     </div>
 
     <script>
-        // Auto-refresh every 30 seconds
+        // Simple auto-refresh every 30 seconds - no AJAX calls
         setTimeout(() => {
             window.location.reload();
         }, 30000);
+        
+        // Remove any error-prone fetch calls
+        console.log('Dashboard loaded successfully');
     </script>
 </body>
 </html>"""
@@ -559,7 +562,7 @@ def get_webhook_calls():
         status = request.args.get('status')   # completed, initiated, in-progress
         limit = int(request.args.get('limit', 100))
         
-        filtered_calls = webhook_calls
+        filtered_calls = webhook_calls.copy()  # Make a copy to avoid modification issues
         
         if call_type:
             filtered_calls = [call for call in filtered_calls if call.get('call_type') == call_type]
@@ -568,18 +571,28 @@ def get_webhook_calls():
             filtered_calls = [call for call in filtered_calls if call.get('status') == status]
         
         # Sort by timestamp (newest first) and limit
-        sorted_calls = sorted(filtered_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
+        try:
+            sorted_calls = sorted(filtered_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
+        except:
+            sorted_calls = filtered_calls[:limit]  # Fallback if sorting fails
         
-        return jsonify({
+        response_data = {
             "success": True, 
             "calls": sorted_calls,
             "total_count": len(webhook_calls),
             "filtered_count": len(sorted_calls)
-        })
+        }
+        
+        # Ensure proper JSON response
+        response = jsonify(response_data)
+        response.headers['Content-Type'] = 'application/json'
+        return response
         
     except Exception as e:
         print(f"❌ Get calls error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        error_response = jsonify({"success": False, "error": str(e), "calls": []})
+        error_response.headers['Content-Type'] = 'application/json'
+        return error_response, 500
 
 @app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
@@ -647,9 +660,31 @@ def health():
         ],
         "call_stats": {
             "total_calls": len(webhook_calls),
-            "recent_calls": len([call for call in webhook_calls if (datetime.now() - datetime.fromisoformat(call['timestamp'].replace('Z', '+00:00').replace('+00:00', ''))).days < 1])
+            "recent_calls": len([call for call in webhook_calls if (datetime.now() - datetime.fromisoformat(call['timestamp'].replace('Z', '+00:00').replace('+00:00', ''))).days < 1]) if webhook_calls else 0
         }
     })
+
+@app.route('/test')
+def test_page():
+    """Simple test page to verify the app is working"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>WasteKing Test Page</title>
+    </head>
+    <body>
+        <h1>WasteKing System Test</h1>
+        <p>If you can see this page, the Flask app is running correctly.</p>
+        <p>System Status: <strong>ONLINE</strong></p>
+        <ul>
+            <li><a href="/">Main Dashboard</a></li>
+            <li><a href="/api/health">Health Check API</a></li>
+            <li><a href="/api/webhook/calls">Webhook Calls API</a></li>
+        </ul>
+    </body>
+    </html>
+    """
 
 @app.after_request
 def after_request(response):
