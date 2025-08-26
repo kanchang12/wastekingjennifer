@@ -11,16 +11,39 @@ app = Flask(__name__)
 # Initialize system
 print("🚀 Initializing WasteKing Simple System...")
 
+# Global conversation counter
+conversation_counter = 0
+
+def get_next_conversation_id():
+    """Generate next conversation ID with counter"""
+    global conversation_counter
+    conversation_counter += 1
+    return f"conv{conversation_counter:08d}"  # conv00000001, conv00000002, etc.
+
+# Create a mock rules processor to satisfy agent constructors
+class MockRulesProcessor:
+    """Mock rules processor that always returns default responses"""
+    def process_rules(self, *args, **kwargs):
+        return None
+    
+    def get_office_hours(self):
+        return "9 AM to 5 PM Monday to Friday"
+    
+    def is_office_hours(self):
+        return True
+
+mock_rules = MockRulesProcessor()
+
 # Initialize agents with shared conversation storage
 shared_conversations = {}
 
-skip_agent = SkipAgent()
+skip_agent = SkipAgent(mock_rules)
 skip_agent.conversations = shared_conversations
 
-mav_agent = MAVAgent()  
+mav_agent = MAVAgent(mock_rules)  
 mav_agent.conversations = shared_conversations
 
-grab_agent = GrabAgent()
+grab_agent = GrabAgent(mock_rules)
 grab_agent.conversations = shared_conversations
 
 print("✅ All agents initialized with shared conversation storage")
@@ -80,7 +103,7 @@ def index():
         "features": [
             "FIXED 4-step WasteKing API booking with payment link creation",
             "FIXED agent routing - Grab handles everything except explicit skip/mav",
-            "Office hours checks implemented",
+            "Mock rules processor (rules functionality disabled)",
             "NO HARDCODED PRICES - ALL prices from real API",
             "SMS integration with Twilio"
         ],
@@ -121,7 +144,14 @@ def process_message():
             return jsonify({"success": False, "message": "No data provided"}), 400
         
         customer_message = data.get('customerquestion', '').strip()
-        conversation_id = f"conv_{int(datetime.now().timestamp())}"
+        
+        # Use provided conversation_id OR create new one only for new conversations
+        conversation_id = data.get('conversation_id')
+        if not conversation_id:
+            conversation_id = get_next_conversation_id()
+            print(f"🆕 NEW CONVERSATION CREATED: {conversation_id}")
+        else:
+            print(f"🔄 CONTINUING CONVERSATION: {conversation_id}")
         
         print(f"📩 Message: {customer_message}")
         print(f"🆔 Conversation: {conversation_id}")
@@ -217,6 +247,7 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "agents": ["Skip", "MAV", "Grab (DEFAULT MANAGER)"],
+        "rules_processor": "Mock (disabled)",
         "api_configured": bool(os.getenv('WASTEKING_ACCESS_TOKEN')),
         "routing_fixed": True,
         "payment_link_creation_fixed": True,
@@ -237,7 +268,7 @@ if __name__ == '__main__':
     print("  ✅ Grab agent is DEFAULT MANAGER - handles everything except explicit skip/mav")
     print("  ✅ Payment link creation (Step 4) FIXED")
     print("  ✅ NO HARDCODED PRICES - REAL API ONLY")
-    print("  ✅ Office hours checks implemented")
-    print("  ✅ Two-situation rule validation")
+    print("  ✅ Mock rules processor (rules functionality disabled)")
+    print("  ✅ All agent initialization issues resolved")
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
