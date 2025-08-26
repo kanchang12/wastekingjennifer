@@ -4,10 +4,6 @@ import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 
-# Import the agents (now includes QualifyingAgent)
-from agents import SkipAgent, MAVAgent, GrabAgent, QualifyingAgent
-from agents import set_supplier_enquiry_function
-
 app = Flask(__name__)
 
 # ElevenLabs Configuration
@@ -15,8 +11,6 @@ elevenlabs_api_key = os.getenv('ELEVENLABS_API_KEY')
 agent_phone_number_id = os.getenv('AGENT_PHONE_NUMBER_ID') 
 agent_id = os.getenv('AGENT_ID')
 SUPPLIER_PHONE = '+447394642517'
-
-set_supplier_enquiry_function(supplier_enquiry)
 
 # Global conversation counter and call storage
 conversation_counter = 0
@@ -84,6 +78,9 @@ def supplier_enquiry(customer_request, conversation_id, price):
         print(f"❌ Supplier enquiry error: {e}")
         return {"success": False, "reason": "exception", "error": str(e)}
 
+# Import agents after supplier_enquiry function is defined
+from agents import SkipAgent, MAVAgent, GrabAgent, QualifyingAgent, set_supplier_enquiry_function
+
 # Initialize agents with shared conversation storage and supplier phone
 shared_conversations = {}
 
@@ -104,8 +101,12 @@ qualifying_agent = QualifyingAgent()
 qualifying_agent.conversations = shared_conversations
 qualifying_agent.supplier_phone = SUPPLIER_PHONE
 
+# Link the supplier_enquiry function to all agents
+set_supplier_enquiry_function(supplier_enquiry)
+
 print("✅ All agents initialized with shared conversation storage")
 print(f"📞 Supplier phone configured: {SUPPLIER_PHONE}")
+print("✅ Supplier enquiry function linked to agents")
 
 print("🔧 Environment check:")
 print(f"   WASTEKING_BASE_URL: {os.getenv('WASTEKING_BASE_URL', 'Not set')}")
