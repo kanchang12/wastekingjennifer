@@ -291,7 +291,7 @@ SURCHARGE_ITEMS = {
 
 
 class BaseAgent:
-    def __init__(self, rules_processor=None):
+    def __init__(self):
         self.conversations = {}  # Store conversation state
 
     def process_message(self, message, conversation_id="default"):
