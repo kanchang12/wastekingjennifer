@@ -302,20 +302,21 @@ class BaseAgent:
         new_data = self.extract_data(message)
         print(f"🔍 NEW DATA: {new_data}")
 
-        # Merge state - PRESERVE EXISTING DATA
+        # Merge state - PRESERVE EXISTING DATA PROPERLY
         for key, value in new_data.items():
-            if value:  # Only update if new value is not empty
+            if value and value.strip():  # Only update if new value is not empty/whitespace
                 state[key] = value
         print(f"🔄 MERGED STATE: {state}")
 
-        # Save state immediately
-        self.conversations[conversation_id] = state
+        # CRITICAL: Ensure state persistence
+        self.conversations[conversation_id] = state.copy()
 
         # Get next response following ALL RULES
         response = self.get_next_response(message, state, conversation_id)
         
-        # Save state again after processing
-        self.conversations[conversation_id] = state
+        # Save state again after processing - DOUBLE CHECK
+        self.conversations[conversation_id] = state.copy()
+        print(f"💾 FINAL STATE SAVED: {self.conversations[conversation_id]}")
         
         return response
 
@@ -411,23 +412,30 @@ class BaseAgent:
             else:
                 data['type'] = '8yd'  # Default
         
-        # Man & Van indicators (HOUSE CLEARANCE = MAV, NOT GRAB!)
+        # Man & Van indicators (HOUSE CLEARANCE = MAV, NOT GRAB!) - EXPANDED LIST
         elif any(phrase in message_lower for phrase in [
             'house clearance', 'furniture removal', 'furniture collection', 'house clear',
             'clearance', 'man and van', 'man & van', 'mav', 'loading service',
-            'furniture', 'wardrobe', 'sofa', 'mattress', 'appliances', 'white goods',
+            'furniture', 'wardrobe', 'wardrobes', 'sofa', 'mattress', 'appliances', 'white goods',
             'office clearance', 'flat clearance', 'garage clear', 'shed clear',
-            'we do the loading', 'you load', 'collection service'
+            'we do the loading', 'you load', 'collection service',
+            'chest of drawers', 'bed', 'table', 'chair', 'bookshelf', 'dresser',
+            'dining table', 'bedroom furniture', 'living room', 'kitchen appliances',
+            'washing machine', 'fridge', 'cooker', 'dishwasher', 'tumble dryer',
+            'remove furniture', 'furniture pick up', 'furniture disposal',
+            'house move', 'moving furniture', 'furniture clearance',
+            'two wardrobes', 'three piece suite'
         ]):
             data['service'] = 'mav'
             data['type'] = '4yd'  # Default
         
-        # Grab hire indicators (ONLY for soil/rubble/muckaway)
+        # Grab hire indicators (ONLY for soil/rubble/muckaway) - STRICT LIST
         elif any(phrase in message_lower for phrase in [
-            'grab', 'grab hire', 'grab lorry', 'soil', 'rubble', 'muckaway', 
-            'dirt', 'earth', 'excavation', 'construction waste', 'heavy materials',
-            'concrete', 'hardcore', 'aggregates', 'topsoil', 'subsoil'
-        ]):
+            'grab hire', 'grab lorry', 'soil removal', 'rubble removal', 'muckaway', 
+            'dirt removal', 'earth removal', 'excavation waste', 'heavy materials removal',
+            'concrete removal', 'hardcore removal', 'aggregates', 'topsoil removal', 'subsoil',
+            'building rubble', 'demolition waste', 'construction rubble'
+        ]) and not any(furniture in message_lower for furniture in ['furniture', 'wardrobe', 'bed', 'sofa', 'table']):
             data['service'] = 'grab'
             data['type'] = '6yd'  # Default
 
@@ -717,20 +725,22 @@ class MAVAgent(BaseAgent):
         self.default_type = '4yd'
 
     def get_next_response(self, message, state, conversation_id):
-        """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
+        """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY - FIXED VERSION"""
         wants_to_book = self.should_book(message)
+        print(f"🔍 MAV AGENT - wants_to_book: {wants_to_book}")
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
+        print(f"📋 MAV COMPLETION: {completion}, ALL_READY: {all_ready}")
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("🚀 MAV: USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("🚀 MAV: ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -745,26 +755,43 @@ class MAVAgent(BaseAgent):
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
-        # B1: INFORMATION GATHERING
+        # B2: CHECK FOR HEAVY MATERIALS FIRST (Before info gathering)
+        if state.get('firstName') and state.get('postcode') and not state.get('heavy_materials_checked'):
+            if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
+                if self.is_business_hours():
+                    return "For heavy materials with man & van service, let me put you through to our specialist team for the best solution."
+                else:
+                    return "For heavy materials with man & van, I can take your details for our specialist team to call back."
+            else:
+                state['heavy_materials_checked'] = True
+                self.conversations[conversation_id] = state
+
+        # B1: INFORMATION GATHERING - FIXED ORDER
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
+        elif not state.get('phone'):
+            return "What's the best phone number to contact you on?"
         elif not state.get('service'):
+            # Auto-set service if not detected
             state['service'] = 'mav'
             state['type'] = '4yd'
             self.conversations[conversation_id] = state
-        elif not state.get('phone'):
-            return "What's the best phone number to contact you on?"
+            print(f"🔧 MAV: Auto-set service to mav, type to 4yd")
 
         # If we have all required info, proceed to get price
-        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+        if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
+                print("🚀 MAV: All info collected, getting pricing")
                 return self.get_pricing(state, conversation_id, wants_to_book)
-            elif state.get('price'):
-                return f"{state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and not wants_to_book:
+                return f"{state.get('type', '4yd')} man & van service at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and wants_to_book:
+                print("🚀 MAV: User wants to book, completing booking")
+                return self.complete_booking(state)
 
-        return "How can I help you with man & van service?"
+        return "I can help you with man & van service for furniture removal. What's your name?"
 
 
 class GrabAgent(BaseAgent):
@@ -776,20 +803,22 @@ class GrabAgent(BaseAgent):
         self.default_type = '6yd'
 
     def get_next_response(self, message, state, conversation_id):
-        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY"""
+        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - FIXED VERSION"""
         wants_to_book = self.should_book(message)
+        print(f"🔍 GRAB AGENT - wants_to_book: {wants_to_book}")
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
+        print(f"📋 GRAB COMPLETION: {completion}, ALL_READY: {all_ready}")
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("🚀 GRAB: USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("🚀 GRAB: ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -804,7 +833,22 @@ class GrabAgent(BaseAgent):
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
-        # C1: MANDATORY INFORMATION GATHERING
+        # C3: MATERIALS ASSESSMENT - Check for mixed materials (transfer needed)
+        if state.get('firstName') and state.get('postcode') and not state.get('materials_checked'):
+            # Check for mixed materials (soil/rubble + other items)
+            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
+            has_other_items = any(item in message.lower() for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
+            
+            if has_soil_rubble and has_other_items:
+                if self.is_business_hours():
+                    return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
+                else:
+                    return "The majority of grabs will only take muckaway which is soil & rubble. I can take your details and have our team call you back to check if we can take the other materials."
+            else:
+                state['materials_checked'] = True
+                self.conversations[conversation_id] = state
+
+        # C1: MANDATORY INFORMATION GATHERING - FIXED ORDER  
         if not state.get('firstName'):
             return "Can I take your name please?"
         elif not state.get('phone'):
@@ -812,15 +856,21 @@ class GrabAgent(BaseAgent):
         elif not state.get('postcode'):
             return "What's the postcode where you need the grab lorry?"
         elif not state.get('service'):
+            # Auto-set service if not detected
             state['service'] = 'grab'
             state['type'] = '6yd'
             self.conversations[conversation_id] = state
+            print(f"🔧 GRAB: Auto-set service to grab, type to 6yd")
 
         # If we have all required info, proceed to get price
-        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+        if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
+                print("🚀 GRAB: All info collected, getting pricing")
                 return self.get_pricing(state, conversation_id, wants_to_book)
-            elif state.get('price'):
-                return f"{state.get('type', '6yd')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and not wants_to_book:
+                return f"{state.get('type', '6yd')} grab lorry service at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and wants_to_book:
+                print("🚀 GRAB: User wants to book, completing booking")
+                return self.complete_booking(state)
 
-        return "How can I help you with grab hire?"
+        return "I can help you with grab lorry service for soil and rubble removal. Can I take your name please?"
