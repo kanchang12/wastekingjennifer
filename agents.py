@@ -459,7 +459,7 @@ class BaseAgent:
             return f"I'm having trouble finding pricing for {current_postcode}. Could you please confirm your complete postcode is correct?"
 
     # CORE FUNCTION 1: GET PRICING ONLY
-    def get_pricing(self, state, conversation_id):
+    def get_pricing(self, state, conversation_id, wants_to_book=False):
         """CORE FUNCTION: Get pricing and present to user - ACTUAL API CALLS"""
         try:
             print("📞 CALLING CREATE_BOOKING API...")
@@ -497,11 +497,19 @@ class BaseAgent:
                         return "For this size job, let me put you through to our specialist team for the best service."
                     else:
                         print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
-                        return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
+                        if wants_to_book:
+                            print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                            return self.complete_booking(state)
+                        else:
+                            return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
                 else:
-                    # No transfer needed - make the sale directly (no office hours check)
-                    print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
-                    return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
+                    # No transfer needed
+                    if wants_to_book:
+                        print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                        return self.complete_booking(state)
+                    else:
+                        print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
+                        return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
                 print("❌ ZERO PRICE RETURNED")
                 return self.validate_postcode_with_customer(state.get('postcode'))
@@ -627,7 +635,7 @@ class SkipAgent(BaseAgent):
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
-            return self.get_pricing(state, conversation_id)
+            return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
@@ -659,7 +667,7 @@ class SkipAgent(BaseAgent):
         # If we have all required info, proceed to get price
         elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
-                return self.get_pricing(state, conversation_id)
+                return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price'):
                 return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
@@ -699,7 +707,7 @@ class MAVAgent(BaseAgent):
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
-            return self.get_pricing(state, conversation_id)
+            return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
@@ -728,7 +736,7 @@ class MAVAgent(BaseAgent):
         # If we have all required info, proceed to get price
         elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
-                return self.get_pricing(state, conversation_id)
+                return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price'):
                 return f"{state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
 
@@ -772,7 +780,7 @@ class GrabAgent(BaseAgent):
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
-            return self.get_pricing(state, conversation_id)
+            return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
         if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
@@ -801,7 +809,7 @@ class GrabAgent(BaseAgent):
         # If we have all required info, proceed to get price
         elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
-                return self.get_pricing(state, conversation_id)
+                return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price'):
                 return f"{state.get('type', '6yd')} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
