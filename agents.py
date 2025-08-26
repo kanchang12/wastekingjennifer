@@ -183,7 +183,7 @@ MAV_RULES = {
         'always_mention': "We have insured and licensed teams",
         'stairs_flats_apartments': {
             'office_hours': "For collections involving stairs, let me put you through to our team for proper assessment.",
-            'out_of_hours': "Collections involving stairs need special assessment. I can arrange a callback.",
+            'out_of_hours': "Let's collect all the info about the project",
             'action': 'Take details + SMS notification to +447823656762'
         }
     },
