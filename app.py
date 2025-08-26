@@ -130,10 +130,7 @@ grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 grab_agent.supplier_phone = SUPPLIER_PHONE
 
-# NEW: Initialize QualifyingAgent
-qualifying_agent = QualifyingAgent()
-qualifying_agent.conversations = shared_conversations
-qualifying_agent.supplier_phone = SUPPLIER_PHONE
+
 
 # Link the supplier_enquiry function to all agents
 set_supplier_enquiry_function(supplier_enquiry)
@@ -218,13 +215,12 @@ def route_to_agent(message, conversation_id):
         return grab_agent.process_message(message, conversation_id)
         
     elif existing_service == 'qualifying':
-        print("🔄 Routing to Qualifying Agent (continuing qualifying conversation)")
-        return qualifying_agent.process_message(message, conversation_id)
+        pass
     
     # PRIORITY 5: NEW - Qualifying Agent handles EVERYTHING ELSE (unknown/other services)
     else:
         print("🔄 Routing to Qualifying Agent (handles all other requests and unknown services)")
-        return qualifying_agent.process_message(message, conversation_id)
+        return "nill"
 
 @app.route('/')
 def index():
@@ -650,7 +646,7 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "agents": ["Skip", "MAV", "Grab", "Qualifying (NEW)"],
+        "agents": ["Skip", "MAV", "Grab"],
         "elevenlabs_configured": bool(elevenlabs_api_key),
         "supplier_phone": SUPPLIER_PHONE,
         "office_hours": is_office_hours(),
