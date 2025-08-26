@@ -4,18 +4,21 @@ import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 
-# Import the agents (now updated with supplier confirmation)
-from agents import SkipAgent, MAVAgent, GrabAgent
+# Import the agents (now includes QualifyingAgent)
+from agents import SkipAgent, MAVAgent, GrabAgent, QualifyingAgent
+from agents import set_supplier_enquiry_function
 
 app = Flask(__name__)
 
 # ElevenLabs Configuration
-elevenlabs_api_key = os.getenv('elevenlabs_api_key')
-agent_phone_number_id = os.getenv('agent_phone_number_id')
-agent_id = os.getenv('agent_id')
+elevenlabs_api_key = os.getenv('ELEVENLABS_API_KEY')
+agent_phone_number_id = os.getenv('AGENT_PHONE_NUMBER_ID') 
+agent_id = os.getenv('AGENT_ID')
 SUPPLIER_PHONE = '+447394642517'
 
-# Global conversation counter
+set_supplier_enquiry_function(supplier_enquiry)
+
+# Global conversation counter and call storage
 conversation_counter = 0
 webhook_calls = []  # Store webhook call data
 
@@ -24,6 +27,62 @@ def get_next_conversation_id():
     global conversation_counter
     conversation_counter += 1
     return f"conv{conversation_counter:08d}"
+
+def supplier_enquiry(customer_request, conversation_id, price):
+    """NEW: Call supplier for enquiry during pricing - uses ElevenLabs Twilio outbound call"""
+    if not elevenlabs_api_key or not agent_phone_number_id or not agent_id:
+        print("❌ ElevenLabs not configured for supplier enquiry")
+        return {"success": False, "reason": "no_elevenlabs_config"}
+    
+    try:
+        headers = {
+            'Content-Type': 'application/json',
+            'xi-api-key': elevenlabs_api_key
+        }
+        
+        # Use ElevenLabs Twilio outbound call API
+        call_data = {
+            "agent_id": agent_id,
+            "agent_phone_number_id": agent_phone_number_id, 
+            "to_number": SUPPLIER_PHONE,
+            "conversation_initiation_client_data": {
+                "customer_request": customer_request,
+                "conversation_id": conversation_id,
+                "quote_price": price,
+                "purpose": "supplier_enquiry"
+            }
+        }
+        
+        response = requests.post(
+            'https://api.elevenlabs.io/v1/convai/twilio/outbound-call',
+            headers=headers,
+            json=call_data
+        )
+        
+        if response.status_code == 200:
+            call_info = response.json()
+            print(f"📞 Supplier enquiry call initiated: {call_info}")
+            
+            # Store the supplier call info
+            supplier_call = {
+                'id': f"supplier_call_{datetime.now().timestamp()}",
+                'timestamp': datetime.now().isoformat(),
+                'customer_request': customer_request,
+                'conversation_id': conversation_id,
+                'quote_price': price,
+                'supplier_call_id': call_info.get('call_id'),
+                'status': 'initiated'
+            }
+            webhook_calls.append(supplier_call)
+            
+            return {"success": True, "call_id": call_info.get('call_id'), "supplier_call": supplier_call}
+        else:
+            print(f"❌ Failed to call supplier: {response.status_code} - {response.text}")
+            return {"success": False, "reason": "api_call_failed", "error": response.text}
+            
+    except Exception as e:
+        print(f"❌ Supplier enquiry error: {e}")
+        return {"success": False, "reason": "exception", "error": str(e)}
 
 # Initialize agents with shared conversation storage and supplier phone
 shared_conversations = {}
@@ -39,6 +98,11 @@ mav_agent.supplier_phone = SUPPLIER_PHONE
 grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 grab_agent.supplier_phone = SUPPLIER_PHONE
+
+# NEW: Initialize QualifyingAgent
+qualifying_agent = QualifyingAgent()
+qualifying_agent.conversations = shared_conversations
+qualifying_agent.supplier_phone = SUPPLIER_PHONE
 
 print("✅ All agents initialized with shared conversation storage")
 print(f"📞 Supplier phone configured: {SUPPLIER_PHONE}")
@@ -63,56 +127,6 @@ def is_office_hours():
     elif day_of_week == 5:  # Saturday
         return 9 <= hour < 12
     return False  # Sunday closed
-
-def call_supplier_for_confirmation(customer_request, conversation_id):
-    """Call supplier to confirm if we can fulfill the request - OFFICE HOURS ONLY"""
-    if not is_office_hours():
-        return {"confirmed": True, "reason": "outside_office_hours"}
-    
-    if not elevenlabs_api_key or not agent_phone_number_id:
-        print("❌ ElevenLabs not configured, assuming confirmation")
-        return {"confirmed": True, "reason": "no_elevenlabs_config"}
-    
-    try:
-        # Make call to supplier using ElevenLabs
-        headers = {
-            'Content-Type': 'application/json',
-            'xi-api-key': elevenlabs_api_key
-        }
-        
-        call_data = {
-            "phone_number_id": agent_phone_number_id,
-            "agent_id": agent_id,
-            "customer_phone_number": SUPPLIER_PHONE,
-            "conversation_config_override": {
-                "agent_prompt": f"You are calling the WasteKing supplier to confirm availability for this request: '{customer_request}'. Ask if we can fulfill this request and get a yes/no answer. Be brief and professional.",
-                "first_message": f"Hi, this is the WasteKing AI assistant. I need to confirm if we can fulfill this customer request: {customer_request}. Can you confirm availability?",
-                "language": "en"
-            }
-        }
-        
-        response = requests.post(
-            'https://api.elevenlabs.io/v1/convai/conversations',
-            headers=headers,
-            json=call_data
-        )
-        
-        if response.status_code == 200:
-            call_info = response.json()
-            print(f"📞 Supplier call initiated: {call_info.get('conversation_id')}")
-            
-            # In a real implementation, you'd need to wait for the call to complete
-            # and get the result via webhook. For now, we'll assume confirmation
-            # after a brief delay unless specifically denied
-            
-            return {"confirmed": True, "reason": "supplier_called", "call_id": call_info.get('conversation_id')}
-        else:
-            print(f"❌ Failed to call supplier: {response.status_code}")
-            return {"confirmed": True, "reason": "call_failed_assume_yes"}
-            
-    except Exception as e:
-        print(f"❌ Supplier call error: {e}")
-        return {"confirmed": True, "reason": "error_assume_yes"}
 
 def transfer_call_to_supplier(conversation_id):
     """Transfer call to supplier - ALL TRANSFERS GO TO +447394642517"""
@@ -149,7 +163,7 @@ def transfer_call_to_supplier(conversation_id):
         return f"Please call our team directly at {SUPPLIER_PHONE}. I'll send your details to them."
 
 def route_to_agent(message, conversation_id):
-    """ENHANCED ROUTING WITH SUPPLIER CONFIRMATION"""
+    """ENHANCED ROUTING WITH QUALIFYING AGENT FOR NON-STANDARD SERVICES"""
     message_lower = message.lower()
     
     print(f"🔍 ROUTING ANALYSIS: '{message_lower}'")
@@ -180,7 +194,12 @@ def route_to_agent(message, conversation_id):
         print("🔄 Routing to MAV Agent (explicit mav mention)")
         return mav_agent.process_message(message, conversation_id)
     
-    # PRIORITY 3: Continue with existing service if available
+    # PRIORITY 3: Grab Agent - explicit grab mentions
+    elif any(word in message_lower for word in ['grab', 'grab hire', 'grab lorry', '6 wheeler', '8 wheeler']):
+        print("🔄 Routing to Grab Agent (explicit grab mention)")
+        return grab_agent.process_message(message, conversation_id)
+    
+    # PRIORITY 4: Continue with existing service if available
     elif existing_service == 'skip':
         print("🔄 Routing to Skip Agent (continuing existing skip conversation)")
         return skip_agent.process_message(message, conversation_id)
@@ -188,16 +207,23 @@ def route_to_agent(message, conversation_id):
     elif existing_service == 'mav':
         print("🔄 Routing to MAV Agent (continuing existing mav conversation)")
         return mav_agent.process_message(message, conversation_id)
-    
-    # PRIORITY 4: Grab Agent handles EVERYTHING ELSE (default manager)
-    else:
-        print("🔄 Routing to Grab Agent (handles ALL other requests including grab, general inquiries, and unknown services)")
+        
+    elif existing_service == 'grab':
+        print("🔄 Routing to Grab Agent (continuing existing grab conversation)")
         return grab_agent.process_message(message, conversation_id)
+        
+    elif existing_service == 'qualifying':
+        print("🔄 Routing to Qualifying Agent (continuing qualifying conversation)")
+        return qualifying_agent.process_message(message, conversation_id)
+    
+    # PRIORITY 5: NEW - Qualifying Agent handles EVERYTHING ELSE (unknown/other services)
+    else:
+        print("🔄 Routing to Qualifying Agent (handles all other requests and unknown services)")
+        return qualifying_agent.process_message(message, conversation_id)
 
 @app.route('/')
 def index():
-    """Render the call tracking dashboard"""
-    # Read the HTML template
+    """ENHANCED: Render the call tracking dashboard with call list"""
     html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -282,24 +308,102 @@ def index():
         .status-ok { color: #48bb78; }
         .status-missing { color: #f56565; }
 
-        .empty-state {
-            text-align: center;
-            padding: 60px 30px;
+        .calls-section {
             background: rgba(255, 255, 255, 0.9);
             backdrop-filter: blur(10px);
             border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
         }
 
-        .empty-state h3 {
+        .calls-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .calls-title {
+            color: #2d3748;
+            font-size: 1.8rem;
+            font-weight: 700;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .refresh-btn:hover {
+            background: #5a67d8;
+        }
+
+        .calls-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .calls-table th {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .calls-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .calls-table tr:hover {
+            background: #f7fafc;
+        }
+
+        .call-status {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-completed { background: #c6f6d5; color: #22543d; }
+        .status-initiated { background: #ffd6cc; color: #c53030; }
+        .status-in-progress { background: #fef5e7; color: #d69e2e; }
+
+        .empty-calls {
+            text-align: center;
+            padding: 60px 30px;
             color: #4a5568;
+        }
+
+        .empty-calls h3 {
             font-size: 1.5rem;
             margin-bottom: 15px;
         }
 
-        .empty-state p {
-            color: #718096;
-            line-height: 1.6;
+        .webhook-url {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .webhook-url strong {
+            color: #667eea;
+            font-family: 'Courier New', monospace;
         }
     </style>
 </head>
@@ -332,18 +436,73 @@ def index():
                     <div class="config-value status-ok">{{ supplier_phone }}</div>
                 </div>
             </div>
+            
+            <div class="webhook-url">
+                <strong>Webhook URL for ElevenLabs:</strong><br>
+                {{ webhook_url }}
+            </div>
         </div>
 
-        <div class="empty-state">
-            <h3>Webhook Integration Active</h3>
-            <p>
-                The system is ready to receive ElevenLabs webhook data.<br>
-                Configure your ElevenLabs agent to send post-call webhooks to:<br>
-                <strong>{{ webhook_url }}</strong><br><br>
-                Call transcripts and customer follow-ups will appear here once calls are completed.
-            </p>
+        <div class="calls-section">
+            <div class="calls-header">
+                <h2 class="calls-title">Recent Calls ({{ call_count }})</h2>
+                <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
+            </div>
+
+            {% if calls %}
+            <table class="calls-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Customer Phone</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th>Conversation ID</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for call in calls %}
+                    <tr>
+                        <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
+                        <td>{{ call.call_type or 'Customer Call' }}</td>
+                        <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
+                        <td>{{ call.duration or 0 }}s</td>
+                        <td>
+                            <span class="call-status status-{{ call.status or 'completed' }}">
+                                {{ (call.status or 'completed').title() }}
+                            </span>
+                        </td>
+                        <td>{{ call.conversation_id or 'N/A' }}</td>
+                        <td>
+                            {% if call.transcript %}
+                                {{ call.transcript[:100] }}...
+                            {% elif call.customer_request %}
+                                {{ call.customer_request[:100] }}...
+                            {% else %}
+                                No details
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-calls">
+                <h3>No Calls Yet</h3>
+                <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
+            </div>
+            {% endif %}
         </div>
     </div>
+
+    <script>
+        // Auto-refresh every 30 seconds
+        setTimeout(() => {
+            window.location.reload();
+        }, 30000);
+    </script>
 </body>
 </html>"""
     
@@ -352,31 +511,39 @@ def index():
         agent_phone_id=agent_phone_number_id,
         agent_id=agent_id,
         supplier_phone=SUPPLIER_PHONE,
-        webhook_url=request.url_root + 'api/webhook/elevenlabs'
+        webhook_url=request.url_root + 'api/webhook/elevenlabs',
+        calls=sorted(webhook_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:50],  # Show latest 50 calls
+        call_count=len(webhook_calls)
     )
 
 @app.route('/api/webhook/elevenlabs', methods=['POST'])
 def elevenlabs_webhook():
-    """Receive webhook data from ElevenLabs post-call"""
+    """ENHANCED: Receive webhook data from ElevenLabs post-call"""
     try:
         data = request.get_json()
+        print(f"📞 Received webhook data: {data}")
         
-        # Store webhook call data
+        # Store webhook call data with enhanced structure
         call_data = {
             'id': f"call_{datetime.now().timestamp()}",
             'timestamp': datetime.now().isoformat(),
             'transcript': data.get('transcript', ''),
             'duration': data.get('duration', 0),
             'conversation_id': data.get('conversation_id', ''),
-            'customer_phone': data.get('customer_phone', ''),
-            'status': 'completed'
+            'customer_phone': data.get('customer_phone', '') or data.get('from_number', ''),
+            'to_number': data.get('to_number', ''),
+            'status': data.get('status', 'completed'),
+            'call_type': data.get('call_type', 'customer_call'),  # customer_call or supplier_enquiry
+            'agent_id': data.get('agent_id', ''),
+            'metadata': data.get('metadata', {}),
+            'raw_data': data  # Store full webhook payload
         }
         
         webhook_calls.append(call_data)
         
-        print(f"📞 Webhook received: {call_data['id']}")
+        print(f"📞 Webhook stored: {call_data['id']} - Status: {call_data['status']}")
         
-        return jsonify({"success": True, "message": "Webhook received"})
+        return jsonify({"success": True, "message": "Webhook received", "call_id": call_data['id']})
         
     except Exception as e:
         print(f"❌ Webhook error: {e}")
@@ -384,12 +551,38 @@ def elevenlabs_webhook():
 
 @app.route('/api/webhook/calls', methods=['GET'])
 def get_webhook_calls():
-    """Get stored webhook call data"""
-    return jsonify({"success": True, "calls": webhook_calls})
+    """Get stored webhook call data - API endpoint"""
+    try:
+        # Optional filtering by query parameters
+        call_type = request.args.get('type')  # customer_call or supplier_enquiry
+        status = request.args.get('status')   # completed, initiated, in-progress
+        limit = int(request.args.get('limit', 100))
+        
+        filtered_calls = webhook_calls
+        
+        if call_type:
+            filtered_calls = [call for call in filtered_calls if call.get('call_type') == call_type]
+        
+        if status:
+            filtered_calls = [call for call in filtered_calls if call.get('status') == status]
+        
+        # Sort by timestamp (newest first) and limit
+        sorted_calls = sorted(filtered_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
+        
+        return jsonify({
+            "success": True, 
+            "calls": sorted_calls,
+            "total_count": len(webhook_calls),
+            "filtered_count": len(sorted_calls)
+        })
+        
+    except Exception as e:
+        print(f"❌ Get calls error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
-    """Main endpoint for processing customer messages with supplier confirmation"""
+    """Main endpoint for processing customer messages with enhanced supplier enquiry"""
     try:
         data = request.get_json()
         if not data:
@@ -411,20 +604,7 @@ def process_message():
         if not customer_message:
             return jsonify({"success": False, "message": "No message provided"}), 400
         
-        # Check if message requires supplier confirmation (during office hours only)
-        if is_office_hours() and any(keyword in customer_message.lower() for keyword in ['urgent', 'immediate', 'today', 'asap', 'special', 'unusual']):
-            print("🔍 CHECKING WITH SUPPLIER...")
-            confirmation = call_supplier_for_confirmation(customer_message, conversation_id)
-            if not confirmation['confirmed']:
-                return jsonify({
-                    "success": True,
-                    "message": "I've checked with our team and we can't fulfill that specific request. What would be a suitable alternative for you?",
-                    "conversation_id": conversation_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "supplier_response": "denied"
-                })
-        
-        # Route to appropriate agent with ENHANCED routing
+        # Route to appropriate agent with ENHANCED routing including QualifyingAgent
         response = route_to_agent(customer_message, conversation_id)
         
         print(f"🤖 Response: {response}")
@@ -452,16 +632,22 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "agents": ["Skip", "MAV", "Grab (DEFAULT MANAGER)"],
-        "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
+        "agents": ["Skip", "MAV", "Grab", "Qualifying (NEW)"],
+        "elevenlabs_configured": bool(elevenlabs_api_key),
         "supplier_phone": SUPPLIER_PHONE,
         "office_hours": is_office_hours(),
         "features": [
             "ElevenLabs webhook integration",
-            "Supplier confirmation (office hours only)",
-            "All transfers to +447394642517",
-            "Real-time call tracking"
-        ]
+            "Supplier enquiry calls during pricing",
+            "Enhanced call tracking dashboard", 
+            "Qualifying agent for unknown services",
+            "Real-time call display",
+            "All transfers to +447394642517"
+        ],
+        "call_stats": {
+            "total_calls": len(webhook_calls),
+            "recent_calls": len([call for call in webhook_calls if (datetime.now() - datetime.fromisoformat(call['timestamp'].replace('Z', '+00:00').replace('+00:00', ''))).days < 1])
+        }
     })
 
 @app.after_request
@@ -473,11 +659,12 @@ def after_request(response):
     return response
 
 if __name__ == '__main__':
-    print("🚀 Starting WasteKing ElevenLabs Integration System...")
-    print("🔧 KEY FEATURES:")
-    print(f"  📞 Supplier confirmation calls to: {SUPPLIER_PHONE}")
-    print(f"  ⏰ Office hours only: Monday-Thursday 8-17, Friday 8-16, Saturday 9-12")
+    print("🚀 Starting Enhanced WasteKing ElevenLabs Integration System...")
+    print("🔧 NEW FEATURES:")
+    print(f"  📞 Supplier enquiry calls during pricing to: {SUPPLIER_PHONE}")
+    print(f"  📊 Enhanced call tracking dashboard with real-time updates")
+    print(f"  🎯 New qualifying agent for unknown/other services")
     print(f"  🔄 All transfers go to: {SUPPLIER_PHONE}")
-    print(f"  📡 ElevenLabs webhook: {'Configured' if ELEVENLABS_API_KEY else 'Not configured'}")
+    print(f"  📡 ElevenLabs webhook: {'Configured' if elevenlabs_api_key else 'Not configured'}")
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
