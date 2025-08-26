@@ -725,22 +725,17 @@ class MAVAgent(BaseAgent):
         self.default_type = '4yd'
 
     def get_next_response(self, message, state, conversation_id):
-        """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY - FIXED VERSION"""
         wants_to_book = self.should_book(message)
-        print(f"🔍 MAV AGENT - wants_to_book: {wants_to_book}")
-        
-        # Check completion status
+
         completion, all_ready = self.check_completion_status(state)
-        print(f"📋 MAV COMPLETION: {completion}, ALL_READY: {all_ready}")
-        
-        # If user wants to book and we have pricing, complete booking immediately
+
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 MAV: USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 MAV: ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -756,7 +751,7 @@ class MAVAgent(BaseAgent):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
         # B2: CHECK FOR HEAVY MATERIALS FIRST (Before info gathering)
-        if state.get('firstName') and state.get('postcode') and not state.get('heavy_materials_checked'):
+        if state.get('firstName') and state.get('postcode') and state.get('phone') and state.get('service') and not state.get('heavy_materials_checked'):
             if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
                 if self.is_business_hours():
                     return "For heavy materials with man & van service, let me put you through to our specialist team for the best solution."
@@ -800,7 +795,7 @@ class GrabAgent(BaseAgent):
         super().__init__()
         self.service_type = 'grab'
         self.service_name = 'grab hire'
-        self.default_type = '6yd'
+        self.default_type = ''
 
     def get_next_response(self, message, state, conversation_id):
         """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - FIXED VERSION"""
@@ -858,7 +853,7 @@ class GrabAgent(BaseAgent):
         elif not state.get('service'):
             # Auto-set service if not detected
             state['service'] = 'grab'
-            state['type'] = '6yd'
+            state['type'] = ''
             self.conversations[conversation_id] = state
             print(f"🔧 GRAB: Auto-set service to grab, type to 6yd")
 
@@ -868,7 +863,7 @@ class GrabAgent(BaseAgent):
                 print("🚀 GRAB: All info collected, getting pricing")
                 return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price') and not wants_to_book:
-                return f"{state.get('type', '6yd')} grab lorry service at {state['postcode']}: {state['price']}. Would you like to book this?"
+                return f"{state.get('type', '')} grab lorry service at {state['postcode']}: {state['price']}. Would you like to book this?"
             elif state.get('price') and wants_to_book:
                 print("🚀 GRAB: User wants to book, completing booking")
                 return self.complete_booking(state)
