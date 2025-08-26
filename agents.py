@@ -70,7 +70,6 @@ SKIP_HIRE_RULES = {
         'waste_asked': {
             'mentioned': 'Use it, don\'t ask again',
             'not_mentioned': "What waste you will use?"
-
         },
         'road_placement': 'MANDATORY PERMIT SCRIPT',
         'driveway': 'No permit needed, continue'
@@ -303,8 +302,10 @@ class BaseAgent:
         new_data = self.extract_data(message)
         print(f"🔍 NEW DATA: {new_data}")
 
-        # Merge state
-        state.update(new_data)
+        # Merge state - PRESERVE EXISTING DATA
+        for key, value in new_data.items():
+            if value:  # Only update if new value is not empty
+                state[key] = value
         print(f"🔄 MERGED STATE: {state}")
 
         # Save state immediately
@@ -345,16 +346,35 @@ class BaseAgent:
                 data['postcode'] = postcode
                 print(f"✅ Extracted complete postcode: {data['postcode']}")
 
-        # Phone extraction
-        phone_match = re.search(r'\b(\d{10,11})\b', message)
-        if phone_match:
-            data['phone'] = phone_match.group(1)
-            print(f"✅ Extracted phone: {data['phone']}")
+        # Phone extraction - handle multiple formats
+        phone_patterns = [
+            r'\b(\d{11})\b',                    # 01442216784 (11 consecutive digits)
+            r'\b(\d{10})\b',                    # 0144216784 (10 consecutive digits)
+            r'\b(\d{5})\s+(\d{6})\b',           # 01442 216784 (5 + 6 digits with space)
+            r'\b(\d{4})\s+(\d{6})\b',           # 0144 216784 (4 + 6 digits with space)
+            r'\b(\d{5})-(\d{6})\b',             # 01442-216784 (5 + 6 digits with hyphen)
+            r'\b(\d{4})-(\d{6})\b',             # 0144-216784 (4 + 6 digits with hyphen)
+            r'\((\d{4,5})\)\s*(\d{6})\b',       # (01442) 216784 (brackets format)
+        ]
+        
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, message)
+            if phone_match:
+                # Combine all captured groups and remove any non-digits
+                phone_parts = [group for group in phone_match.groups() if group]
+                phone_number = ''.join(phone_parts)
+                if len(phone_number) >= 10:  # Valid UK phone number
+                    data['phone'] = phone_number
+                    print(f"✅ Extracted phone: {data['phone']}")
+                    break
 
         # Name extraction - FIXED: Don't extract "Yes" as name
         if 'kanchen' in message_lower or 'kanchan' in message_lower:
             data['firstName'] = 'Kanchan'
             print(f"✅ Extracted name: Kanchan")
+        elif 'jackie' in message_lower:
+            data['firstName'] = 'Jackie'
+            print(f"✅ Extracted name: Jackie")
         else:
             name_patterns = [
                 r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
@@ -362,19 +382,57 @@ class BaseAgent:
                 r'^([A-Z][a-z]+)\s+(?:wants|needs)',
                 r'^([A-Z][a-z]+),',
                 r'for\s+([A-Z][a-z]+),',
+                r'([A-Z][a-z]+)\s+phone',
+                r'phone\s+([A-Z][a-z]+)',
             ]
             for pattern in name_patterns:
                 name_match = re.search(pattern, message)
                 if name_match:
                     potential_name = name_match.group(1).strip().title()
                     # RULE: Don't extract common words as names
-                    if potential_name.lower() not in ['yes', 'no', 'there', 'what', 'how']:
+                    if potential_name.lower() not in ['yes', 'no', 'there', 'what', 'how', 'confirmed', 'phone', 'please']:
                         data['firstName'] = potential_name
                         print(f"✅ Extracted name: {data['firstName']}")
                         break
 
+        # SERVICE DETECTION - CRITICAL FOR PROPER ROUTING
+        # Skip hire indicators
+        if any(word in message_lower for word in ['skip', 'skip hire', 'container hire']):
+            data['service'] = 'skip'
+            # Detect skip size
+            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']):
+                data['type'] = '8yd'
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+                data['type'] = '6yd'
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+                data['type'] = '4yd'
+            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']):
+                data['type'] = '12yd'
+            else:
+                data['type'] = '8yd'  # Default
+        
+        # Man & Van indicators (HOUSE CLEARANCE = MAV, NOT GRAB!)
+        elif any(phrase in message_lower for phrase in [
+            'house clearance', 'furniture removal', 'furniture collection', 'house clear',
+            'clearance', 'man and van', 'man & van', 'mav', 'loading service',
+            'furniture', 'wardrobe', 'sofa', 'mattress', 'appliances', 'white goods',
+            'office clearance', 'flat clearance', 'garage clear', 'shed clear',
+            'we do the loading', 'you load', 'collection service'
+        ]):
+            data['service'] = 'mav'
+            data['type'] = '4yd'  # Default
+        
+        # Grab hire indicators (ONLY for soil/rubble/muckaway)
+        elif any(phrase in message_lower for phrase in [
+            'grab', 'grab hire', 'grab lorry', 'soil', 'rubble', 'muckaway', 
+            'dirt', 'earth', 'excavation', 'construction waste', 'heavy materials',
+            'concrete', 'hardcore', 'aggregates', 'topsoil', 'subsoil'
+        ]):
+            data['service'] = 'grab'
+            data['type'] = '6yd'  # Default
+
         # Extract waste type information - FOLLOW WASTE TYPE RULES
-        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'soil', 'rubble', 'concrete', 'tiles']
+        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'rubble', 'concrete', 'tiles', 'wardrobe', 'clearance']
         found_waste = []
         
         for keyword in waste_keywords:
@@ -387,12 +445,12 @@ class BaseAgent:
 
         # Extract location information
         location_phrases = [
-            'in the garage', 'in garage', 'garage',
+            'in the garage', 'in garage', 'garage', 'half a garage',
             'in the garden', 'garden', 'back garden', 'front garden',
-            'in the house', 'inside', 'indoors',
+            'in the house', 'inside', 'indoors', 'house clearance',
             'outside', 'outdoors', 'on the drive', 'driveway',
             'easy access', 'easy to access', 'accessible',
-            'ground floor', 'upstairs', 'basement'
+            'ground floor', 'upstairs', 'basement', 'flat', 'apartment'
         ]
         for phrase in location_phrases:
             if phrase in message_lower:
@@ -414,7 +472,8 @@ class BaseAgent:
             'send me the link', 'i want to book', 'ready to book', 'lets book',
             'checkout', 'complete order', 'finalize booking', 'secure booking',
             'reserve this', 'confirm this', 'i\'ll take it', 'that works',
-            'perfect', 'sounds good', 'thats fine', 'arrange this'
+            'perfect', 'sounds good', 'thats fine', 'arrange this',
+            'wants to book', 'please send payment'
         ]
         
         # Positive responses
@@ -586,11 +645,6 @@ class BaseAgent:
         except Exception as e:
             print(f"❌ SMS error: {e}")
 
-    # COMMENTED OUT - TOO MANY DUPLICATE FUNCTIONS
-    # def complete_booking_proper(self, state):
-    # def get_pricing_and_complete_booking(self, state, conversation_id):
-    # def get_pricing_and_ask(self, state, conversation_id):
-
 
 class SkipAgent(BaseAgent):
     """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7"""
@@ -599,26 +653,6 @@ class SkipAgent(BaseAgent):
         self.service_type = 'skip'
         self.service_name = 'skip hire'
         self.default_type = '8yd'
-
-    def extract_data(self, message):
-        data = super().extract_data(message)
-        message_lower = message.lower()
-        
-        if any(word in message_lower for word in ['skip', 'skip hire']):
-            data['service'] = 'skip'
-            
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']):
-                data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
-                data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
-                data['type'] = '4yd'
-            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']):
-                data['type'] = '12yd'
-            else:
-                data['type'] = '8yd'  # Default
-                
-        return data
 
     def get_next_response(self, message, state, conversation_id):
         """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY"""
@@ -682,16 +716,6 @@ class MAVAgent(BaseAgent):
         self.service_name = 'man & van'
         self.default_type = '4yd'
 
-    def extract_data(self, message):
-        data = super().extract_data(message)
-        message_lower = message.lower()
-
-        if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
-            data['service'] = 'mav'
-            data['type'] = '4yd'  # Default
-
-        return data
-
     def get_next_response(self, message, state, conversation_id):
         """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
         wants_to_book = self.should_book(message)
@@ -750,20 +774,6 @@ class GrabAgent(BaseAgent):
         self.service_type = 'grab'
         self.service_name = 'grab hire'
         self.default_type = '6yd'
-
-    def extract_data(self, message):
-        data = super().extract_data(message)
-        message_lower = message.lower()
-
-        if any(word in message_lower for word in ['grab', 'grab hire']):
-            data['service'] = 'grab'
-            data['type'] = '6yd'  # Default
-        # If no specific service mentioned, default to grab
-        elif not data.get('service'):
-            data['service'] = 'grab'
-            data['type'] = '6yd'
-
-        return data
 
     def get_next_response(self, message, state, conversation_id):
         """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY"""
