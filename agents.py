@@ -696,6 +696,13 @@ class SkipAgent(BaseAgent):
             elif state.get('price'):
                 return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
+        response = self.get_pricing_and_ask(state, conversation_id)
+        if "Would you like to book this?" in response:
+            # Auto-complete booking instead of asking
+            return self.complete_booking_proper(state)
+    
+    return response
+
         return "How can I help you with skip hire?"
 
 
