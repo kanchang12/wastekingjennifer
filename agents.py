@@ -619,8 +619,8 @@ class BaseAgent:
 
 class SkipAgent(BaseAgent):
     """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7"""
-    def __init__(self, rules_processor=None):
-        super().__init__(rules_processor)
+    def __init__(self):
+        super().__init__()
         self.service_type = 'skip'
         self.service_name = 'skip hire'
         self.default_type = '8yd'
@@ -701,8 +701,8 @@ class SkipAgent(BaseAgent):
 
 class MAVAgent(BaseAgent):
     """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6"""
-    def __init__(self, rules_processor):
-        super().__init__(rules_processor)
+    def __init__(self):
+        super().__init__()
         self.service_type = 'mav'
         self.service_name = 'man & van'
         self.default_type = '4yd'
@@ -770,8 +770,8 @@ class MAVAgent(BaseAgent):
 
 class GrabAgent(BaseAgent):
     """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5"""
-    def __init__(self, rules_processor):
-        super().__init__(rules_processor)
+    def __init__(self):
+        super().__init__()
         self.service_type = 'grab'
         self.service_name = 'grab hire'
         self.default_type = '6yd'
