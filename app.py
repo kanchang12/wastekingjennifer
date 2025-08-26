@@ -1,8 +1,19 @@
-import re
-import json
-import os
-import requests
-from datetime import datetime
+import sys
+import traceback
+
+print("Starting app.py import...")
+
+try:
+    import os
+    import json
+    import requests
+    from datetime import datetime
+    from flask import Flask, request, jsonify, render_template_string
+    print("✅ Basic imports successful")
+except Exception as e:
+    print(f"❌ Basic imports failed: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
 # Import supplier enquiry function from main app (we'll make it available globally)
