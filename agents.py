@@ -697,13 +697,11 @@ class SkipAgent(BaseAgent):
                 return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
 
         response = self.get_pricing_and_ask(state, conversation_id)
-        if "Would you like to book this?" in response:
+        if "book this?" in response:
             # Auto-complete booking instead of asking
             return self.complete_booking_proper(state)
-    
-    return response
+        return response
 
-        return "How can I help you with skip hire?"
 
 
 class MAVAgent(BaseAgent):
@@ -770,7 +768,11 @@ class MAVAgent(BaseAgent):
             if not state.get('price'):
                 return self.get_pricing_and_ask(state, conversation_id)
             elif state.get('price'):
-                return f"{state.get('type', '4yd')} man & van at {state['postcode']}: {state['price']}. Would you like to book this?"
+                response = self.get_pricing_and_ask(state, conversation_id)
+                if "book this?" in response:
+                    # Auto-complete booking instead of asking
+                    return self.complete_booking_proper(state)
+        return response
 
         return "How can I help you with man & van service?"
 
