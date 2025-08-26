@@ -10,9 +10,9 @@ from agents import SkipAgent, MAVAgent, GrabAgent
 app = Flask(__name__)
 
 # ElevenLabs Configuration
-ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY')
-AGENT_PHONE_NUMBER_ID = os.getenv('AGENT_PHONE_NUMBER_ID')
-AGENT_ID = os.getenv('AGENT_ID')
+elevenlabs_api_key = os.getenv('elevenlabs_api_key')
+agent_phone_number_id = os.getenv('agent_phone_number_id')
+agent_id = os.getenv('agent_id')
 SUPPLIER_PHONE = '+447394642517'
 
 # Global conversation counter
@@ -46,9 +46,9 @@ print(f"📞 Supplier phone configured: {SUPPLIER_PHONE}")
 print("🔧 Environment check:")
 print(f"   WASTEKING_BASE_URL: {os.getenv('WASTEKING_BASE_URL', 'Not set')}")
 print(f"   WASTEKING_ACCESS_TOKEN: {'Set' if os.getenv('WASTEKING_ACCESS_TOKEN') else 'Not set'}")
-print(f"   ELEVENLABS_API_KEY: {'Set' if ELEVENLABS_API_KEY else 'Not set'}")
-print(f"   AGENT_PHONE_NUMBER_ID: {AGENT_PHONE_NUMBER_ID or 'Not set'}")
-print(f"   AGENT_ID: {AGENT_ID or 'Not set'}")
+print(f"   ELEVENLABS_API_KEY: {'Set' if elevenlabs_api_key else 'Not set'}")
+print(f"   AGENT_PHONE_NUMBER_ID: {agent_phone_number_id or 'Not set'}")
+print(f"   AGENT_ID: {agent_id or 'Not set'}")
 
 def is_office_hours():
     """Check if it's office hours for supplier confirmation"""
@@ -69,7 +69,7 @@ def call_supplier_for_confirmation(customer_request, conversation_id):
     if not is_office_hours():
         return {"confirmed": True, "reason": "outside_office_hours"}
     
-    if not ELEVENLABS_API_KEY or not AGENT_PHONE_NUMBER_ID:
+    if not elevenlabs_api_key or not agent_phone_number_id:
         print("❌ ElevenLabs not configured, assuming confirmation")
         return {"confirmed": True, "reason": "no_elevenlabs_config"}
     
@@ -77,12 +77,12 @@ def call_supplier_for_confirmation(customer_request, conversation_id):
         # Make call to supplier using ElevenLabs
         headers = {
             'Content-Type': 'application/json',
-            'xi-api-key': ELEVENLABS_API_KEY
+            'xi-api-key': elevenlabs_api_key
         }
         
         call_data = {
-            "phone_number_id": AGENT_PHONE_NUMBER_ID,
-            "agent_id": AGENT_ID,
+            "phone_number_id": agent_phone_number_id,
+            "agent_id": agent_id,
             "customer_phone_number": SUPPLIER_PHONE,
             "conversation_config_override": {
                 "agent_prompt": f"You are calling the WasteKing supplier to confirm availability for this request: '{customer_request}'. Ask if we can fulfill this request and get a yes/no answer. Be brief and professional.",
@@ -116,17 +116,17 @@ def call_supplier_for_confirmation(customer_request, conversation_id):
 
 def transfer_call_to_supplier(conversation_id):
     """Transfer call to supplier - ALL TRANSFERS GO TO +447394642517"""
-    if not ELEVENLABS_API_KEY or not AGENT_PHONE_NUMBER_ID:
+    if not elevenlabs_api_key or not agent_phone_number_id:
         return "I'm transferring you to our team at +447394642517. Please hold while I connect you."
     
     try:
         headers = {
             'Content-Type': 'application/json',
-            'xi-api-key': ELEVENLABS_API_KEY
+            'xi-api-key': elevenlabs_api_key
         }
         
         transfer_data = {
-            "phone_number_id": AGENT_PHONE_NUMBER_ID,
+            "phone_number_id": agent_phone_number_id,
             "transfer_to": SUPPLIER_PHONE,
             "conversation_id": conversation_id
         }
@@ -348,9 +348,9 @@ def index():
 </html>"""
     
     return render_template_string(html_template,
-        elevenlabs_configured=bool(ELEVENLABS_API_KEY),
-        agent_phone_id=AGENT_PHONE_NUMBER_ID,
-        agent_id=AGENT_ID,
+        elevenlabs_configured=bool(elevenlabs_api_key),
+        agent_phone_id=agent_phone_number_id,
+        agent_id=agent_id,
         supplier_phone=SUPPLIER_PHONE,
         webhook_url=request.url_root + 'api/webhook/elevenlabs'
     )
