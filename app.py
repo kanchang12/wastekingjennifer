@@ -133,7 +133,7 @@ def process_message():
         customer_message = data.get('customerquestion', '').strip()
         
         # Use provided conversation_id OR create new one only for new conversations
-        conversation_id = data.get('conversation_id')
+        conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id') or data.get('system__conversation_id')
         if not conversation_id:
             conversation_id = get_next_conversation_id()
             print(f"🆕 NEW CONVERSATION CREATED: {conversation_id}")
