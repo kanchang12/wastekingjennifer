@@ -113,7 +113,7 @@ def transfer_call_to_supplier(conversation_id):
         return f"Please call our team directly at {SUPPLIER_PHONE}. I'll send your details to them."
 
 # Import agents after supplier_enquiry function is defined
-from agents import SkipAgent, MAVAgent, GrabAgent, QualifyingAgent, set_supplier_enquiry_function, set_transfer_function
+from agents import SkipAgent, MAVAgent, GrabAgent, set_supplier_enquiry_function, set_transfer_function
 
 # Initialize agents with shared conversation storage and supplier phone
 shared_conversations = {}
