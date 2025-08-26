@@ -829,7 +829,7 @@ class GrabAgent(BaseAgent):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
 
         # C3: MATERIALS ASSESSMENT - Check for mixed materials (transfer needed)
-        if state.get('firstName') and state.get('postcode') and not state.get('materials_checked'):
+        if state.get('firstName') and state.get('postcode') and state.get('phone') and not state.get('materials_checked'):
             # Check for mixed materials (soil/rubble + other items)
             has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
             has_other_items = any(item in message.lower() for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
