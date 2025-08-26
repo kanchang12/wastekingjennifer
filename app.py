@@ -15,8 +15,7 @@ app = Flask(__name__)
 print("🚀 Initializing WasteKing Simple System...")
 
 # Load rules
-rules_processor = RulesProcessor()
-print("📋 Rules processor loaded")
+
 
 # Initialize agents with shared conversation storage
 shared_conversations = {}
