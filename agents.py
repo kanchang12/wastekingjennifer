@@ -7,6 +7,284 @@ from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
 # Import supplier enquiry function from main app (we'll make it available globally)
 supplier_enquiry = None  # Will be set by main app
+transfer_call_to_supplier = None  # Will be set by main app
+transfer_call_to_supplier = None  # Will be set by main app
+
+# COMPLETE HARDCODED BUSINESS RULES - EVERY SINGLE RULE FROM ORIGINAL PDF
+OFFICE_HOURS = {
+    'monday_thursday': {'start': 8, 'end': 17},
+    'friday': {'start': 8, 'end': 16.5},
+    'saturday': {'start': 9, 'end': 12},
+    'sunday': 'closed'
+}
+
+TRANSFER_RULES = {
+    'management_director': {
+        'triggers': ['glenn currie', 'director', 'speak to glenn', 'glenn'],
+        'office_hours': "I am sorry, Glenn is not available, may I take your details and Glenn will call you back?",
+        'out_of_hours': "I can take your details and have our director call you back first thing tomorrow",
+        'sms_notify': '+447823656762',
+        'action': 'TRANSFER_IMMEDIATELY'
+    },
+    'complaints': {
+        'triggers': ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry', 'terrible service', 'poor service'],
+        'office_hours': "I understand your frustration, please bear with me while I transfer you to the appropriate person.",
+        'out_of_hours': "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow.",
+        'action': 'TRANSFER',
+        'sms_notify': '+447823656762'
+    },
+    'specialist_services': {
+        'services': ['hazardous waste disposal', 'asbestos removal', 'asbestos collection', 'weee electrical waste', 'chemical disposal', 'medical waste', 'trade waste', 'wheelie bins'],
+        'office_hours': 'Transfer immediately',
+        'out_of_hours': 'Take details + SMS notification to +447823656762'
+    }
+}
+
+SKIP_HIRE_RULES = {
+    'A1_information_gathering': {
+        'check_provided': ['name', 'postcode', 'waste_type'],
+        'postcode_confirm': "Can you confirm [postcode] is correct?",
+        'missing_info': "Ask ONLY what's missing",
+        'postcode_not_found': {
+            'office_hours': 'Transfer',
+            'out_of_hours': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'A2_heavy_materials': {
+        'question': "What are you going to keep in the skip?",
+        'rules': {
+            '12yd': 'ONLY light materials (no concrete, soil, bricks - too heavy to lift)',
+            '8yd_under': 'CAN take heavy materials (bricks, soil, concrete, glass)'
+        },
+        '12yd_heavy_response': "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller.",
+        'man_van_suggestion': {
+            'trigger': '8 yard or smaller skip + LIGHT MATERIALS ONLY (no heavy items mentioned)',
+            'script': "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?",
+            'if_yes': 'Use marketplace tool for BOTH skip AND man & van quotes, present both prices',
+            'if_no': 'Continue with skip process'
+        }
+    },
+    'A3_size_location': {
+        'size_check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What size skip are you thinking of?",
+            'unsure': "We have 4, 6, 8, and 12-yard skips. Our 8-yard is most popular nationally."
+        },
+        'location_check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "Will the skip go on your driveway or on the road?"
+        },
+        'waste_asked': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What waste you will use?"
+        },
+        'road_placement': 'MANDATORY PERMIT SCRIPT',
+        'driveway': 'No permit needed, continue'
+    },
+    'permit_script': {
+        'exact_words': "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe.",
+        'questions': [
+            "Are there any parking bays where the skip will go?",
+            "Are there yellow lines in that area?", 
+            "Are there any parking restrictions on that road?"
+        ],
+        'never_accept': "no permit needed"
+    },
+    'A4_access': {
+        'question': "Is there easy access for our lorry to deliver the skip?",
+        'followup': "Any low bridges, narrow roads, or parking restrictions?",
+        'critical': "3.5m width minimum required",
+        'complex_access': {
+            'office_hours': "For complex access situations, let me put you through to our team for a site assessment.",
+            'out_of_hours': "For complex access situations, I can take your details and have our team call you back first thing tomorrow for a site assessment.",
+            'action': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'A5_prohibited_items': {
+        'question': "Do you have any of these items?",
+        'surcharge_items': {
+            'fridges_freezers': {'charge': 20, 'reason': 'Need degassing'},
+            'mattresses': {'charge': 15, 'reason': 'Special disposal'},
+            'upholstered_furniture': {'charge': 15, 'reason': 'Special disposal'}
+        },
+        'surcharge_process': [
+            'Get base price from marketplace tool',
+            'IMMEDIATELY calculate total with surcharges',
+            'Present FINAL price including surcharges'
+        ],
+        'example': "The base price is £200, and with the sofa that's an additional £15, making your total £215 including VAT.",
+        'transfer_required': {
+            'plasterboard': "Plasterboard requires a separate skip.",
+            'gas_cylinders': "We can help with hazardous materials.",
+            'paints': "We can help with hazardous materials.",
+            'hazardous_chemicals': "We can help with hazardous materials.",
+            'asbestos': 'Always transfer/SMS notification',
+            'tyres': "Tyres can't be put in skip"
+        }
+    },
+    'A6_timing': {
+        'check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_given': "When do you need this delivered?"
+        },
+        'exact_script': "We can't guarantee exact times, but delivery is between SEVEN AM TO SIX PM"
+    },
+    'A7_quote': {
+        'handle_all_amounts': 'no price limit - both office hours and out-of-hours',
+        'include_surcharges': 'TOTAL PRICE including all surcharges',
+        'examples': {
+            'no_surcharges': "The price for your 8-yard skip is £200 including VAT.",
+            'with_sofa': "The price for your 8-yard skip including the £15 sofa surcharge is £215 including VAT."
+        },
+        'always_include': [
+            "Collection within 72 hours standard",
+            "Level load requirement for skip collection",
+            "Driver calls when en route",
+            "98% recycling rate",
+            "We have insured and licensed teams",
+            "Digital waste transfer notes provided"
+        ]
+    }
+}
+
+MAV_RULES = {
+    'B1_information_gathering': {
+        'check_provided': ['name', 'postcode', 'waste_type'],
+        'skip_if_given': True,
+        'ask_missing_only': True
+    },
+    'B2_heavy_materials': {
+        'question': "Do you have soil, rubble, bricks, concrete, or tiles?",
+        'if_yes': {
+            'office_hours': "For heavy materials with man & van service, let me put you through to our specialist team for the best solution.",
+            'out_of_hours': "For heavy materials with man & van, I can take your details for our specialist team to call back.",
+            'action': 'Take details + SMS notification to +447823656762'
+        },
+        'if_no': 'Continue to volume assessment'
+    },
+    'B3_volume_assessment': {
+        'amount_check': {
+            'described': 'Don\'t ask again',
+            'not_clear': "How much waste do you have approximately?"
+        },
+        'exact_script': "We charge by the cubic yard",
+        'weight_allowances': [
+            "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos",
+            "The majority of our collections are done under our generous weight allowances"
+        ],
+        'labour_time': [
+            "We allow generous labour time and 95% of all our jobs are done within the time frame",
+            "Although if the collection goes over our labour time, there is a £19 charge per 15 minutes"
+        ],
+        'if_unsure': "Think in terms of washing machine loads or black bags.",
+        'reference': "National average is 6 yards for man & van service."
+    },
+    'B4_access_critical': {
+        'questions': [
+            "Where is the waste located and how easy is it to access?",
+            "Can we park on the driveway or close to the waste?",
+            "Are there any stairs involved?",
+            "How far is our parking from the waste?"
+        ],
+        'always_mention': "We have insured and licensed teams",
+        'stairs_flats_apartments': {
+            'office_hours': "For collections involving stairs, let me put you through to our team for proper assessment.",
+            'out_of_hours': "Let's collect all the info about the project",
+            'action': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'B5_additional_timing': {
+        'question': "Is there anything else you need removing while we're on site?",
+        'prohibited_items': {
+            'fridges_freezers': {'charge': 20, 'condition': 'if allowed'},
+            'mattresses': {'charge': 15, 'condition': 'if allowed'},
+            'upholstered_furniture': {'charge': 15, 'reason': 'due to EA regulations'}
+        },
+        'time_restrictions': "NEVER guarantee specific times",
+        'script': "We can't guarantee exact times, but collection is typically between 7am-6pm",
+        'sunday_collections': {
+            'script': "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team and they will be able to help"
+        }
+    },
+    'B6_quote_pricing': {
+        'call_marketplace': True,
+        'process': [
+            'Call marketplace tool',
+            'IMMEDIATELY AFTER GETTING BASE PRICE:',
+            '1. Calculate any surcharges for prohibited items mentioned',
+            '2. Add surcharges to base price'
+        ]
+    }
+}
+
+GRAB_RULES = {
+    'C1_mandatory_info': {
+        'never_call_tools_until_all_info': True,
+        'mandatory_fields': [
+            {'field': 'name', 'question': "Can I take your name please?"},
+            {'field': 'phone', 'question': "What's the best phone number to contact you on?"},
+            {'field': 'postcode', 'question': "What's the postcode where you need the grab lorry?"},
+            {'field': 'waste_type', 'question': "What type of materials do you have?"},
+            {'field': 'quantity', 'question': "How much material do you have approximately?"}
+        ],
+        'only_after_all_info': 'proceed to service-specific questions'
+    },
+    'C2_grab_size_exact_scripts': {
+        'mandatory_exact_scripts': {
+            '8_wheeler': "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry.",
+            '6_wheeler': "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
+        },
+        'terminology': {
+            '6_wheelers': '12 tonnes capacity',
+            '8_wheelers': '16 tonnes capacity'
+        },
+        'never_say': ['8-ton', '6-ton', 'any other tonnage'],
+        'never_improvise': True,
+        'always_use': {
+            'grab_lorry': 'not just "grab"',
+            '16_tonne': 'for 8-wheelers',
+            '12_tonne': 'for 6-wheelers'
+        }
+    },
+    'C3_materials_assessment': {
+        'question': "What type of materials do you have?",
+        'soil_rubble_only': 'Continue to access assessment',
+        'mixed_materials': {
+            'condition': 'soil, rubble + other items like wood',
+            'script': "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
+        },
+        'wait_load_skip': {
+            'immediate_response': "For wait & load skips, let me put you through to our specialist who will check availability & costs.",
+            'action': 'TRANSFER'
+        },
+        'pricing_issues': {
+            'zero_unrealistic': {
+                'condition': 'grab prices show £0.00 or unrealistic high prices (over £500)',
+                'response': "Most grab prices require specialist assessment. Let me put you through to our team who can provide accurate pricing."
+            },
+            'no_prices': 'Always transfer/SMS notification for accurate pricing'
+        }
+    },
+    'C4_access_timing': {
+        'access_question': "Is there clear access for the grab lorry?",
+        'timing_check': {
+            'given': 'Don\'t ask again',
+            'not_given': "When do you need this?"
+        },
+        'complex_access': {
+            'office_hours': 'TRANSFER',
+            'out_of_hours': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'C5_quote_pricing': {
+        'call_marketplace': True,
+        'amount_thresholds': {
+            '300_or_more_office': "For this size job, let me put you through to our specialist team for the best service.",
+            '300_or_more_out_of_hours': 'Take details + SMS notification to +447823656762, still try to complete booking',
+            'under_300': 'Continue to booking decision (both office hours and out-of-hours)'
+        }
+    }
+}
 
 # QUALIFYING AGENT RULES - CONFIGURABLE WITHOUT CODE CHANGES
 QUALIFYING_RULES = {
@@ -115,34 +393,6 @@ QUALIFYING_RULES = {
         'office_hours': 'assess_and_route',
         'out_of_hours': 'assess_and_route',
         'can_book_directly': False
-    }
-}
-
-# Existing rules from original code remain the same...
-OFFICE_HOURS = {
-    'monday_thursday': {'start': 8, 'end': 17},
-    'friday': {'start': 8, 'end': 16.5},
-    'saturday': {'start': 9, 'end': 12},
-    'sunday': 'closed'
-}
-
-TRANSFER_RULES = {
-    'management_director': {
-        'triggers': ['glenn currie', 'director', 'speak to glenn'],
-        'office_hours': "I am sorry, Glenn is not available, may I take your details and Glenn will call you back?",
-        'out_of_hours': "I can take your details and have our director call you back first thing tomorrow",
-        'sms_notify': '+447823656762'
-    },
-    'complaints': {
-        'office_hours': "I understand your frustration, please bear with me while I transfer you to the appropriate person.",
-        'out_of_hours': "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow.",
-        'action': 'TRANSFER',
-        'sms_notify': '+447823656762'
-    },
-    'specialist_services': {
-        'services': ['hazardous waste disposal', 'asbestos removal', 'asbestos collection', 'weee electrical waste', 'chemical disposal', 'medical waste', 'trade waste', 'wheelie bins'],
-        'office_hours': 'Transfer immediately',
-        'out_of_hours': 'Take details + SMS notification to +447823656762'
     }
 }
 
@@ -341,12 +591,88 @@ class BaseAgent:
             return True   # Grab: transfer needed for £300+
         return False
 
-    def validate_postcode_with_customer(self, current_postcode):
+    def do_transfer(self, conversation_id, reason="general_transfer"):
+        """ACTUAL TRANSFER FUNCTION - CALLS ELEVENLABS API TO TRANSFER"""
+        if transfer_call_to_supplier:
+            print(f"🔄 EXECUTING ACTUAL TRANSFER - Reason: {reason}")
+            return transfer_call_to_supplier(conversation_id)
+        else:
+            print("❌ Transfer function not available - fallback message")
+            return "I'm transferring you to our team at +447394642517. Please hold while I connect you."
+
+    def check_for_transfers(self, message, conversation_id):
+        """Check for transfer triggers and execute appropriate action - FOLLOW EXACT ORIGINAL RULES"""
+        message_lower = message.lower()
+        
+        # Check for Glenn Currie/Director requests - TAKE DETAILS, NO TRANSFER
+        if any(trigger in message_lower for trigger in TRANSFER_RULES['management_director']['triggers']):
+            print("🔍 GLENN CURRIE REQUESTED - TAKE DETAILS FOR CALLBACK")
+            if self.is_business_hours():
+                return TRANSFER_RULES['management_director']['office_hours']
+            else:
+                return TRANSFER_RULES['management_director']['out_of_hours']
+        
+        # Check for complaints - TRANSFER (only complaints transfer immediately)
+        if any(trigger in message_lower for trigger in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry', 'terrible service', 'poor service']):
+            print("🔄 COMPLAINT DETECTED - TRANSFERRING IMMEDIATELY")
+            if self.is_business_hours():
+                return self.do_transfer(conversation_id, "complaint_office")
+            else:
+                return TRANSFER_RULES['complaints']['out_of_hours']
+        
+        # Check for specialist services
+        if any(service in message_lower for service in TRANSFER_RULES['specialist_services']['services']):
+            print("🔄 SPECIALIST SERVICE REQUESTED")
+            if self.is_business_hours():
+                return self.do_transfer(conversation_id, "specialist_service")
+            else:
+                return "We can help with that specialist service. I can take your details and have our team call you back first thing tomorrow."
+        
+        return None  # No transfer needed
         """Ask customer to confirm postcode if pricing fails"""
         if not current_postcode or len(current_postcode) < 5:
             return "Could you please provide your complete postcode? For example, LS14ED rather than just LS1."
         else:
             return f"I'm having trouble finding pricing for {current_postcode}. Could you please confirm your complete postcode is correct?"
+
+    def do_transfer(self, conversation_id, reason="general_transfer"):
+        """ACTUAL TRANSFER FUNCTION - CALLS ELEVENLABS API TO TRANSFER"""
+        if transfer_call_to_supplier:
+            print(f"🔄 EXECUTING ACTUAL TRANSFER - Reason: {reason}")
+            return transfer_call_to_supplier(conversation_id)
+        else:
+            print("❌ Transfer function not available - fallback message")
+            return "I'm transferring you to our team at +447394642517. Please hold while I connect you."
+
+    def check_for_transfers(self, message, conversation_id):
+        """Check for transfer triggers and execute appropriate action - FOLLOW EXACT ORIGINAL RULES"""
+        message_lower = message.lower()
+        
+        # Check for Glenn Currie/Director requests - TAKE DETAILS, NO TRANSFER
+        if any(trigger in message_lower for trigger in TRANSFER_RULES['management_director']['triggers']):
+            print("🔍 GLENN CURRIE REQUESTED - TAKE DETAILS FOR CALLBACK")
+            if self.is_business_hours():
+                return TRANSFER_RULES['management_director']['office_hours']
+            else:
+                return TRANSFER_RULES['management_director']['out_of_hours']
+        
+        # Check for complaints - TRANSFER (only complaints transfer immediately)
+        if any(trigger in message_lower for trigger in TRANSFER_RULES['complaints']['triggers']):
+            print("🔄 COMPLAINT DETECTED - TRANSFERRING IMMEDIATELY")
+            if self.is_business_hours():
+                return self.do_transfer(conversation_id, "complaint_office")
+            else:
+                return TRANSFER_RULES['complaints']['out_of_hours']
+        
+        # Check for specialist services
+        if any(service in message_lower for service in TRANSFER_RULES['specialist_services']['services']):
+            print("🔄 SPECIALIST SERVICE REQUESTED")
+            if self.is_business_hours():
+                return self.do_transfer(conversation_id, "specialist_service")
+            else:
+                return "We can help with that specialist service. I can take your details and have our team call you back first thing tomorrow."
+        
+        return None  # No transfer needed
 
     def get_pricing(self, state, conversation_id, wants_to_book=False):
         """ENHANCED: Get pricing with supplier enquiry integration"""
@@ -391,7 +717,7 @@ class BaseAgent:
                     # Only check office hours if transfer is actually needed
                     if self.is_business_hours():
                         print("🔄 TRANSFER NEEDED - OFFICE HOURS")
-                        return "For this size job, let me put you through to our specialist team for the best service."
+                        return self.do_transfer(conversation_id, "high_value_office")
                     else:
                         print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
                         if wants_to_book:
@@ -483,127 +809,6 @@ class BaseAgent:
             print(f"❌ SMS error: {e}")
 
 
-# NEW: QUALIFYING AGENT CLASS
-class QualifyingAgent(BaseAgent):
-    """NEW QUALIFYING AGENT - HANDLES ALL OTHER/UNKNOWN SERVICES"""
-    def __init__(self):
-        super().__init__()
-        self.service_type = 'qualifying'
-        self.service_name = 'waste management'
-        self.default_type = 'general'
-
-    def identify_service_category(self, message):
-        """Identify which qualifying rule applies to the message"""
-        message_lower = message.lower()
-        
-        for rule_id, rule in QUALIFYING_RULES.items():
-            for trigger in rule['triggers']:
-                if trigger in message_lower:
-                    print(f"🎯 QUALIFYING RULE MATCHED: {rule_id} - {rule['name']}")
-                    return rule_id, rule
-        
-        # Default to general enquiry if nothing matches
-        return 'rule_8', QUALIFYING_RULES['rule_8']
-
-    def ask_qualifying_questions(self, state, rule):
-        """Ask qualifying questions based on the rule"""
-        current_question_index = state.get('question_index', 0)
-        questions = rule['questions']
-        
-        if current_question_index < len(questions):
-            state['question_index'] = current_question_index + 1
-            return questions[current_question_index]
-        
-        return None  # All questions asked
-
-    def get_next_response(self, message, state, conversation_id):
-        """QUALIFYING AGENT FLOW - FOLLOW CONFIGURABLE RULES"""
-        wants_to_book = self.should_book(message)
-        
-        # Check completion status
-        completion, all_ready = self.check_completion_status(state)
-        
-        # If user wants to book and we have pricing, complete booking immediately
-        if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
-            return self.complete_booking(state)
-
-        # Check for Management/Director requests
-        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
-            return TRANSFER_RULES['management_director']['out_of_hours']
-
-        # Check for complaints
-        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
-            return TRANSFER_RULES['complaints']['out_of_hours']
-
-        # Identify service category if not already identified
-        if not state.get('qualifying_rule'):
-            rule_id, rule = self.identify_service_category(message)
-            state['qualifying_rule'] = rule_id
-            state['rule_data'] = rule
-            state['service'] = 'qualifying'
-            self.conversations[conversation_id] = state
-            print(f"🎯 SERVICE IDENTIFIED: {rule['name']}")
-
-        rule = state.get('rule_data', QUALIFYING_RULES['rule_8'])
-
-        # Handle high priority items (like hazardous materials) immediately
-        if rule.get('priority') == 'high':
-            if self.is_business_hours():
-                return "This requires immediate specialist attention. Let me transfer you to our hazardous waste team now."
-            else:
-                return "This requires specialist handling. I can take your details and have our hazardous waste team call you first thing in the morning."
-
-        # Basic information gathering first
-        if not state.get('firstName'):
-            return "What's your name?"
-        elif not state.get('postcode'):
-            return "What's your postcode?"
-        elif not state.get('phone'):
-            return "What's the best number to contact you on?"
-
-        # Ask qualifying questions
-        next_question = self.ask_qualifying_questions(state, rule)
-        if next_question:
-            return next_question
-
-        # All questions asked, now handle based on rule action
-        rule_action = rule.get('office_hours' if self.is_business_hours() else 'out_of_hours', 'take_details_and_sms')
-
-        if rule_action == 'transfer_immediately' or rule_action == 'transfer':
-            return "Based on your requirements, let me put you through to our specialist team who can help you immediately."
-        
-        elif rule_action == 'quote_and_book' and rule.get('can_book_directly'):
-            if not state.get('price') and all_ready:
-                # Try to get pricing for qualifying services 
-                try:
-                    # For qualifying agent, we'll use a generic service type
-                    return self.get_pricing(state, conversation_id, wants_to_book)
-                except:
-                    return "Let me put you through to our team who can provide accurate pricing for your specific requirements."
-            elif state.get('price'):
-                return f"Based on your requirements, the estimated price is {state['price']}. Would you like to proceed with booking?"
-
-        elif rule_action == 'take_details_and_sms':
-            # Send SMS notification to supplier
-            return f"I've taken all your details and will have our specialist team call you back within 2 hours. Your enquiry reference is QUA-{conversation_id[-6:].upper()}."
-
-        elif rule_action == 'assess_and_route':
-            # Try to route to appropriate service based on collected information
-            waste_type = state.get('waste_type', '').lower()
-            
-            if any(word in waste_type for word in ['skip', 'yard']):
-                return "Based on what you've told me, it sounds like skip hire would be perfect for you. Let me get you a quote."
-            elif any(word in waste_type for word in ['man and van', 'collection', 'removal']):
-                return "Based on your requirements, our man and van service would be ideal. We do all the work for you."
-            else:
-                return "Based on your requirements, let me put you through to our team who can recommend the best service for you."
-
-        # Default response
-        return "Thank you for the information. Let me arrange for our specialist team to call you back with the best solution for your needs."
-
-
-# Existing agent classes remain the same but with supplier enquiry integration...
 class SkipAgent(BaseAgent):
     """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7"""
     def __init__(self):
@@ -615,6 +820,11 @@ class SkipAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY"""
         wants_to_book = self.should_book(message)
+        
+        # Check for transfers FIRST - before any other processing
+        transfer_response = self.check_for_transfers(message, conversation_id)
+        if transfer_response:
+            return transfer_response
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
@@ -628,18 +838,6 @@ class SkipAgent(BaseAgent):
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
-
-        # Check for Management/Director requests
-        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
-            return TRANSFER_RULES['management_director']['out_of_hours']
-
-        # Check for complaints
-        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
-            return TRANSFER_RULES['complaints']['out_of_hours']
-
-        # Check for specialist services
-        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
-            return "We can help with that specialist service. Let me arrange for our team to call you back."
 
         # A1: INFORMATION GATHERING SEQUENCE
         if not state.get('firstName'):
@@ -678,6 +876,11 @@ class MAVAgent(BaseAgent):
         """MAN & VAN FLOW - FOLLOW ALL RULES B1-B6 EXACTLY"""
         wants_to_book = self.should_book(message)
         
+        # Check for transfers FIRST - before any other processing
+        transfer_response = self.check_for_transfers(message, conversation_id)
+        if transfer_response:
+            return transfer_response
+        
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
@@ -690,18 +893,6 @@ class MAVAgent(BaseAgent):
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
-
-        # Check for Management/Director requests
-        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
-            return TRANSFER_RULES['management_director']['out_of_hours']
-
-        # Check for complaints
-        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
-            return TRANSFER_RULES['complaints']['out_of_hours']
-
-        # Check for specialist services
-        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
-            return "We can help with that specialist service. Let me arrange for our team to call you back."
 
         # B1: INFORMATION GATHERING
         if not state.get('firstName'):
@@ -737,6 +928,11 @@ class GrabAgent(BaseAgent):
         """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY"""
         wants_to_book = self.should_book(message)
         
+        # Check for transfers FIRST - before any other processing
+        transfer_response = self.check_for_transfers(message, conversation_id)
+        if transfer_response:
+            return transfer_response
+        
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
@@ -749,18 +945,6 @@ class GrabAgent(BaseAgent):
         if all_ready and not state.get('price'):
             print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
-
-        # Check for Management/Director requests
-        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
-            return TRANSFER_RULES['management_director']['out_of_hours']
-
-        # Check for complaints
-        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
-            return TRANSFER_RULES['complaints']['out_of_hours']
-
-        # Check for specialist services
-        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
-            return "We can help with that specialist service. Let me arrange for our team to call you back."
 
         # C1: MANDATORY INFORMATION GATHERING
         if not state.get('firstName'):
@@ -784,8 +968,136 @@ class GrabAgent(BaseAgent):
         return "How can I help you with grab hire?"
 
 
+# NEW: QUALIFYING AGENT CLASS
+class QualifyingAgent(BaseAgent):
+    """NEW QUALIFYING AGENT - HANDLES ALL OTHER/UNKNOWN SERVICES"""
+    def __init__(self):
+        super().__init__()
+        self.service_type = 'qualifying'
+        self.service_name = 'waste management'
+        self.default_type = 'general'
+
+    def identify_service_category(self, message):
+        """Identify which qualifying rule applies to the message"""
+        message_lower = message.lower()
+        
+        for rule_id, rule in QUALIFYING_RULES.items():
+            for trigger in rule['triggers']:
+                if trigger in message_lower:
+                    print(f"🎯 QUALIFYING RULE MATCHED: {rule_id} - {rule['name']}")
+                    return rule_id, rule
+        
+        # Default to general enquiry if nothing matches
+        return 'rule_8', QUALIFYING_RULES['rule_8']
+
+    def ask_qualifying_questions(self, state, rule):
+        """Ask qualifying questions based on the rule"""
+        current_question_index = state.get('question_index', 0)
+        questions = rule['questions']
+        
+        if current_question_index < len(questions):
+            state['question_index'] = current_question_index + 1
+            return questions[current_question_index]
+        
+        return None  # All questions asked
+
+    def get_next_response(self, message, state, conversation_id):
+        """QUALIFYING AGENT FLOW - FOLLOW CONFIGURABLE RULES"""
+        wants_to_book = self.should_book(message)
+        
+        # Check for transfers FIRST - before any other processing
+        transfer_response = self.check_for_transfers(message, conversation_id)
+        if transfer_response:
+            return transfer_response
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
+        
+        # If user wants to book and we have pricing, complete booking immediately
+        if wants_to_book and state.get('price') and state.get('booking_ref'):
+            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
+            return self.complete_booking(state)
+
+        # Identify service category if not already identified
+        if not state.get('qualifying_rule'):
+            rule_id, rule = self.identify_service_category(message)
+            state['qualifying_rule'] = rule_id
+            state['rule_data'] = rule
+            state['service'] = 'qualifying'
+            self.conversations[conversation_id] = state
+            print(f"🎯 SERVICE IDENTIFIED: {rule['name']}")
+
+        rule = state.get('rule_data', QUALIFYING_RULES['rule_8'])
+
+        # Handle high priority items (like hazardous materials) immediately
+        if rule.get('priority') == 'high':
+            if self.is_business_hours():
+                return self.do_transfer(conversation_id, "hazardous_immediate")
+            else:
+                return self.do_transfer(conversation_id, "hazardous_out_hours")
+
+        # Basic information gathering first
+        if not state.get('firstName'):
+            return "What's your name?"
+        elif not state.get('postcode'):
+            return "What's your postcode?"
+        elif not state.get('phone'):
+            return "What's the best number to contact you on?"
+
+        # Ask qualifying questions
+        next_question = self.ask_qualifying_questions(state, rule)
+        if next_question:
+            return next_question
+
+        # All questions asked, now handle based on rule action
+        rule_action = rule.get('office_hours' if self.is_business_hours() else 'out_of_hours', 'take_details_and_sms')
+
+        if rule_action == 'transfer_immediately' or rule_action == 'transfer':
+            return self.do_transfer(conversation_id, "specialist_qualifying")
+        
+        elif rule_action == 'quote_and_book' and rule.get('can_book_directly'):
+            if not state.get('price') and all_ready:
+                # Try to get pricing for qualifying services 
+                try:
+                    return self.get_pricing(state, conversation_id, wants_to_book)
+                except:
+                    return self.do_transfer(conversation_id, "pricing_failed")
+            elif state.get('price'):
+                return f"Based on your requirements, the estimated price is {state['price']}. Would you like to proceed with booking?"
+
+        elif rule_action == 'take_details_and_sms':
+            # Send SMS notification to supplier
+            return f"I've taken all your details and will have our specialist team call you back within 2 hours. Your enquiry reference is QUA-{conversation_id[-6:].upper()}."
+
+        elif rule_action == 'assess_and_route':
+            # Try to route to appropriate service based on collected information
+            waste_type = state.get('waste_type', '').lower()
+            
+            if any(word in waste_type for word in ['skip', 'yard']):
+                return "Based on what you've told me, it sounds like skip hire would be perfect for you. Let me get you a quote."
+            elif any(word in waste_type for word in ['man and van', 'collection', 'removal']):
+                return "Based on your requirements, our man and van service would be ideal. We do all the work for you."
+            else:
+                return self.do_transfer(conversation_id, "general_assessment")
+
+        # Default response
+        return "Thank you for the information. Let me arrange for our specialist team to call you back with the best solution for your needs."
+
+
 # Function to set supplier_enquiry reference from main app
 def set_supplier_enquiry_function(func):
     global supplier_enquiry
     supplier_enquiry = func
     print("✅ Supplier enquiry function linked to agents")
+
+# Function to set transfer_call_to_supplier reference from main app  
+def set_transfer_function(func):
+    global transfer_call_to_supplier
+    transfer_call_to_supplier = func
+    print("✅ Transfer function linked to agents")
+
+# Function to set transfer_call_to_supplier reference from main app  
+def set_transfer_function(func):
+    global transfer_call_to_supplier
+    transfer_call_to_supplier = func
+    print("✅ Transfer function linked to agents")
