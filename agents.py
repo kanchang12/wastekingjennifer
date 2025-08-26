@@ -5,10 +5,6 @@ import requests
 from datetime import datetime
 from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
-# Import supplier enquiry function from main app (we'll make it available globally)
-supplier_enquiry = None  # Will be set by main app
-transfer_call_to_supplier = None  # Will be set by main app
-
 # COMPLETE HARDCODED BUSINESS RULES - EVERY SINGLE RULE FROM PDF
 OFFICE_HOURS = {
     'monday_thursday': {'start': 8, 'end': 17},
