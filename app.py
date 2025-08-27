@@ -1,25 +1,25 @@
 import os
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, render_template
+from flask import Flask, request, jsonify, render_template
 from collections import defaultdict
 
 # Import the simple agents
 from agents import SkipAgent, MAVAgent, GrabAgent
 
 app = Flask(__name__)
+# Initialize a new list for webhook calls each time the app starts
 webhook_calls = []
-# Initialize system
+
 print("🚀 Initializing WasteKing Simple System...")
 
-# Global conversation counter
 conversation_counter = 0
 
 def get_next_conversation_id():
     """Generate next conversation ID with counter"""
     global conversation_counter
     conversation_counter += 1
-    return f"conv{conversation_counter:08d}"  # conv00000001, conv00000002, etc.
+    return f"conv{conversation_counter:08d}"
 
 # Initialize agents with shared conversation storage
 shared_conversations = {}
@@ -27,7 +27,7 @@ shared_conversations = {}
 skip_agent = SkipAgent()
 skip_agent.conversations = shared_conversations
 
-mav_agent = MAVAgent()  
+mav_agent = MAVAgent()
 mav_agent.conversations = shared_conversations
 
 grab_agent = GrabAgent()
@@ -56,7 +56,7 @@ def route_to_agent(message, conversation_id):
         print("🔄 Routing to Skip Agent (explicit skip mention)")
         return skip_agent.process_message(message, conversation_id)
     
-    # PRIORITY 2: MAV Agent - ONLY explicit man and van mentions  
+    # PRIORITY 2: MAV Agent - ONLY explicit man and van mentions
     elif any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'small van', 'medium van', 'large van']):
         print("🔄 Routing to MAV Agent (explicit mav mention)")
         return mav_agent.process_message(message, conversation_id)
@@ -88,65 +88,74 @@ def index():
     return render_template(
         'index.html',
         grouped_calls=grouped_calls,
-        call_count=len(webhook_calls)
+        call_count=len(webhook_calls),
+        elevenlabs_configured=bool(os.getenv('ELEVENLABS_API_KEY')),
+        agent_phone_id=os.getenv('AGENT_PHONE_NUMBER_ID'),
+        agent_id=os.getenv('AGENT_ID'),
+        supplier_phone=os.getenv('SUPPLIER_PHONE', 'Not set'),
+        webhook_url='Your Webhook URL Here' # Replace with your actual public webhook URL
     )
 
 @app.route('/api/dashboard/live_calls', methods=['GET'])
 def get_live_calls():
-    """New endpoint for the dashboard to get live call updates."""
-    try:
-        last_conv_id = request.args.get('last_id')
-        new_calls = []
-        found_last = False
-        
-        # Iterate backward to find the last received call
-        for call in reversed(webhook_calls):
-            if call.get('conversation_id') == last_conv_id:
-                found_last = True
-                break
-            new_calls.append(call)
-        
-        # Reverse the list to get them in chronological order
-        new_calls.reverse()
-        
-        return jsonify({
-            "success": True,
-            "new_calls": new_calls,
-            "total_count": len(webhook_calls)
-        })
-    except Exception as e:
-        print(f"Live calls API error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    """New endpoint for the dashboard to get live call updates."""
+    try:
+        last_conv_id = request.args.get('last_id')
+        new_calls = []
+        
+        found_last = False
+        # Iterate backward to find the last received call
+        for call in reversed(webhook_calls):
+            if call.get('conversation_id') == last_conv_id:
+                found_last = True
+                break
+            new_calls.append(call)
+        
+        # Reverse the list to get them in chronological order
+        new_calls.reverse()
+        
+        return jsonify({
+            "success": True,
+            "new_calls": new_calls,
+            "total_count": len(webhook_calls)
+        })
+    except Exception as e:
+        print(f"Live calls API error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/webhook/elevenlabs', methods=['POST'])
+def elevenlabs_webhook():
+    """Receives the post-call webhook from ElevenLabs and stores the data."""
+    try:
+        data = request.get_json()
+        call_data = {
+            'id': f"call_{datetime.now().timestamp()}",
+            'timestamp': datetime.now().isoformat(),
+            'transcript': data.get('transcript', ''),
+            'duration': data.get('duration', 0),
+            'conversation_id': data.get('conversation_id', ''),
+            'customer_phone': data.get('customer_phone', '') or data.get('from_number', ''),
+            'to_number': data.get('to_number', ''),
+            'status': data.get('status', 'completed'),
+            'call_type': data.get('call_type', 'customer_call'),
+            'metadata': data.get('metadata', {}),
+            'raw_data': data
+        }
+        webhook_calls.append(call_data)
+        print(f"Webhook received and stored: {call_data['id']}")
+        return jsonify({"success": True, "message": "Webhook received", "call_id": call_data['id']})
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 @app.route('/wasteking-chatbot.js')
 def serve_chatbot_js():
-    return send_from_directory('static', 'wasteking-chatbot.js')
-@app.route('/api/dashboard/live_calls', methods=['GET'])
-def get_live_calls():
-    """New endpoint for the dashboard to get live call updates."""
-    try:
-        last_conv_id = request.args.get('last_id')
-        new_calls = []
-        found_last = False
-        
-        # Iterate backward to find the last received call
-        for call in reversed(webhook_calls):
-            if call.get('conversation_id') == last_conv_id:
-                found_last = True
-                break
-            new_calls.append(call)
-        
-        # Reverse the list to get them in chronological order
-        new_calls.reverse()
-        
-        return jsonify({
-            "success": True,
-            "new_calls": new_calls,
-            "total_count": len(webhook_calls)
-        })
-    except Exception as e:
-        print(f"Live calls API error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+    # This route will only work if you have a 'static' directory with this file
+    try:
+        return send_from_directory('static', 'wasteking-chatbot.js')
+    except:
+        return "File not found", 404
 
 from flask import request, jsonify
 
@@ -156,7 +165,6 @@ def chatbot_api():
     message = data.get('message')
     conversation_id = data.get('conversation_id')
 
-    # Process the message, e.g., call AI or return canned response
     response_text = f"You said: {message}"
 
     return jsonify({'response': response_text})
@@ -171,7 +179,6 @@ def process_message():
         
         customer_message = data.get('customerquestion', '').strip()
         
-        # Use provided conversation_id OR create new one only for new conversations
         conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id') or data.get('system__conversation_id')
         if not conversation_id:
             conversation_id = get_next_conversation_id()
@@ -185,7 +192,6 @@ def process_message():
         if not customer_message:
             return jsonify({"success": False, "message": "No message provided"}), 400
         
-        # Route to appropriate agent with FIXED routing
         response = route_to_agent(customer_message, conversation_id)
         
         print(f"🤖 Response: {response}")
@@ -244,7 +250,6 @@ def test_api():
                     return jsonify({"success": False, "error": f"Missing required field: {field}"}), 400
                 customer_data[field] = value
             
-            # Optional fields
             optional_fields = ['lastName', 'email', 'type', 'date']
             for field in optional_fields:
                 if data.get(field):
