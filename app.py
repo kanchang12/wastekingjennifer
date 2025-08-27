@@ -15,6 +15,19 @@ print("🚀 Initializing WasteKing Simple System...")
 # Global conversation counter
 conversation_counter = 0
 
+def get_calls_json():
+    """Return webhook calls grouped by conversation ID"""
+    grouped = defaultdict(list)
+    for call in webhook_calls:
+        conv_id = call.get("conversation_id", "Unassigned")
+        grouped[conv_id].append({
+            "customer": call.get("customerquestion"),
+            "response": call.get("response"),
+            "timestamp": call.get("timestamp")
+        })
+    return grouped
+
+
 def get_next_conversation_id():
     """Generate next conversation ID with counter"""
     global conversation_counter
@@ -79,18 +92,13 @@ def route_to_agent(message, conversation_id):
 
 @app.route('/')
 def index():
-    """Single HTML page showing all webhooks without any fail"""
-    # Group calls by conversation ID for the dashboard view
-    grouped_calls = defaultdict(list)
-    for call in sorted(webhook_calls, key=lambda x: x.get('timestamp', ''), reverse=True):
-        conversation_id = call.get('conversation_id', 'Unassigned')
-        grouped_calls[conversation_id].append(call)
-
+    """Dashboard showing grouped calls by conversation ID"""
+    grouped_calls = get_calls_json()
     return render_template(
         'index.html',
-        grouped_calls=grouped_calls,
-        call_count=len(webhook_calls)
+        grouped_calls=grouped_calls
     )
+
 
 
 @app.route('/api/dashboard/live_calls', methods=['GET'])
