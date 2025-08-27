@@ -442,6 +442,7 @@ def index():
             padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            cursor: pointer; /* NEW: Add cursor pointer to indicate it's clickable */
         }
         .conversation-header {
             font-size: 1.5rem;
@@ -452,6 +453,60 @@ def index():
             padding-bottom: 10px;
         }
         .calls-table {
+            margin-top: 20px;
+        }
+
+        /* NEW: Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.6);
+            backdrop-filter: blur(5px);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            padding: 30px;
+            border-radius: 20px;
+            width: 80%;
+            max-width: 700px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            position: relative;
+        }
+
+        .close-btn {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            position: absolute;
+            top: 15px;
+            right: 25px;
+        }
+
+        .close-btn:hover,
+        .close-btn:focus {
+            color: #000;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .transcript-text {
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #333;
+            max-height: 70vh;
+            overflow-y: auto;
             margin-top: 20px;
         }
     </style>
@@ -500,8 +555,13 @@ def index():
 
             {% if grouped_calls %}
             {% for conv_id, calls in grouped_calls.items() %}
-            <div class="conversation-group">
-                <div class="conversation-header">Conversation ID: {{ conv_id }}</div>
+            <div class="conversation-group" onclick="showTranscript('{{ conv_id }}')">
+                <div class="conversation-header">
+                    Conversation ID: {{ conv_id }}
+                    {% if calls|length > 1 %}
+                        <span style="font-size: 0.8em; font-weight: normal; color: #4a5568;"> ({{ calls|length }} parts)</span>
+                    {% endif %}
+                </div>
                 <table class="calls-table">
                     <thead>
                         <tr>
@@ -549,14 +609,61 @@ def index():
         </div>
     </div>
 
+    <div id="transcriptModal" class="modal">
+      <div class="modal-content">
+        <span class="close-btn" onclick="closeModal()">&times;</span>
+        <h2 id="modal-title"></h2>
+        <div class="transcript-text" id="transcriptContent"></div>
+      </div>
+    </div>
+
     <script>
-        // Simple auto-refresh every 30 seconds - no AJAX calls
+        // Store call data in a JavaScript variable for easy access
+        const groupedCalls = JSON.parse('{{ grouped_calls | tojson }}');
+
+        function showTranscript(convId) {
+            const calls = groupedCalls[convId];
+            if (!calls || calls.length === 0) {
+                return;
+            }
+
+            const modalTitle = document.getElementById('modal-title');
+            const transcriptContent = document.getElementById('transcriptContent');
+            const transcriptModal = document.getElementById('transcriptModal');
+            
+            modalTitle.textContent = `Transcript for Conversation ID: ${convId}`;
+            
+            let fullTranscript = '';
+            calls.forEach((call, index) => {
+                fullTranscript += `--- Call Part ${index + 1} (${call.call_type || 'N/A'}) ---\n`;
+                fullTranscript += `Start Time: ${new Date(call.timestamp).toLocaleString()}\n`;
+                fullTranscript += `Duration: ${call.duration}s\n`;
+                fullTranscript += `Status: ${call.status || 'N/A'}\n\n`;
+                fullTranscript += `${call.transcript || 'No transcript available.'}\n\n`;
+            });
+            
+            transcriptContent.textContent = fullTranscript;
+            transcriptModal.style.display = "flex";
+        }
+
+        function closeModal() {
+            const transcriptModal = document.getElementById('transcriptModal');
+            transcriptModal.style.display = "none";
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const transcriptModal = document.getElementById('transcriptModal');
+            if (event.target == transcriptModal) {
+                closeModal();
+            }
+        }
+
+        // Simple auto-refresh every 30 seconds
         setTimeout(() => {
             window.location.reload();
         }, 30000);
-        
-        // Remove any error-prone fetch calls
-        console.log('Dashboard loaded successfully');
+
     </script>
 </body>
 </html>
