@@ -92,7 +92,6 @@ def index():
     )
 
 def elevenlabs_webhook():
-    """Receives the post-call webhook from ElevenLabs and stores the data."""
     try:
         data = request.get_json()
         call_data = {
