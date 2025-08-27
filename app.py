@@ -175,6 +175,14 @@ def process_message():
 
         print(f"🤖 Response: {response}")
 
+        # FIX: Append the call data to the global webhook_calls list
+        webhook_calls.append({
+            "conversation_id": conversation_id,
+            "customerquestion": customer_message,
+            "response": response,
+            "timestamp": datetime.now().isoformat()
+        })
+
         return jsonify({
             "success": True,
             "message": response,
@@ -189,7 +197,6 @@ def process_message():
             "message": "I'll connect you with our team who can help immediately.",
             "error": str(e)
         }), 500
-
 
 @app.route('/api/test', methods=['POST'])
 def test_api():
