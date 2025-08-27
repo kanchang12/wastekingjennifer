@@ -254,312 +254,312 @@ def index():
         grouped_calls[conversation_id].append(call)
         
     html_template = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>WasteKing Call Tracker</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WasteKing Call Tracker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                padding: 20px;
-            }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
 
-            .container {
-                max-width: 1400px;
-                margin: 0 auto;
-            }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
 
-            .header {
-                background: rgba(255, 255, 255, 0.95);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 30px;
-                margin-bottom: 30px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            }
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
 
-            .header h1 {
-                color: #2d3748;
-                font-size: 2.5rem;
-                font-weight: 700;
-                margin-bottom: 10px;
-            }
+        .header h1 {
+            color: #2d3748;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
 
-            .header p {
-                color: #4a5568;
-                font-size: 1.1rem;
-            }
+        .header p {
+            color: #4a5568;
+            font-size: 1.1rem;
+        }
 
-            .config-info {
-                background: rgba(255, 255, 255, 0.9);
-                backdrop-filter: blur(10px);
-                border-radius: 15px;
-                padding: 25px;
-                margin-bottom: 30px;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-                border-left: 4px solid #48bb78;
-            }
+        .config-info {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #48bb78;
+        }
 
-            .config-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                gap: 20px;
-                margin-top: 15px;
-            }
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 15px;
+        }
 
-            .config-item {
-                background: #f7fafc;
-                padding: 15px;
-                border-radius: 10px;
-            }
+        .config-item {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+        }
 
-            .config-label {
-                font-weight: 600;
-                color: #2d3748;
-                margin-bottom: 5px;
-            }
+        .config-label {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
 
-            .config-value {
-                font-family: 'Courier New', monospace;
-                color: #4a5568;
-                font-size: 0.9rem;
-            }
+        .config-value {
+            font-family: 'Courier New', monospace;
+            color: #4a5568;
+            font-size: 0.9rem;
+        }
 
-            .status-ok { color: #48bb78; }
-            .status-missing { color: #f56565; }
+        .status-ok { color: #48bb78; }
+        .status-missing { color: #f56565; }
 
-            .calls-section {
-                background: rgba(255, 255, 255, 0.9);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 30px;
-                margin-bottom: 30px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            }
+        .calls-section {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
 
-            .calls-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 25px;
-            }
+        .calls-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
 
-            .calls-title {
-                color: #2d3748;
-                font-size: 1.8rem;
-                font-weight: 700;
-            }
+        .calls-title {
+            color: #2d3748;
+            font-size: 1.8rem;
+            font-weight: 700;
+        }
 
-            .refresh-btn {
-                background: #667eea;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 10px;
-                cursor: pointer;
-                font-weight: 600;
-                transition: background 0.3s;
-            }
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
 
-            .refresh-btn:hover {
-                background: #5a67d8;
-            }
+        .refresh-btn:hover {
+            background: #5a67d8;
+        }
 
-            .calls-table {
-                width: 100%;
-                border-collapse: collapse;
-                background: white;
-                border-radius: 10px;
-                overflow: hidden;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }
+        .calls-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
 
-            .calls-table th {
-                background: #667eea;
-                color: white;
-                padding: 15px;
-                text-align: left;
-                font-weight: 600;
-            }
+        .calls-table th {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
 
-            .calls-table td {
-                padding: 15px;
-                border-bottom: 1px solid #e2e8f0;
-            }
+        .calls-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+        }
 
-            .calls-table tr:hover {
-                background: #f7fafc;
-            }
+        .calls-table tr:hover {
+            background: #f7fafc;
+        }
 
-            .call-status {
-                padding: 4px 12px;
-                border-radius: 15px;
-                font-size: 0.8rem;
-                font-weight: 600;
-            }
+        .call-status {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
 
-            .status-completed { background: #c6f6d5; color: #22543d; }
-            .status-initiated { background: #ffd6cc; color: #c53030; }
-            .status-in-progress { background: #fef5e7; color: #d69e2e; }
+        .status-completed { background: #c6f6d5; color: #22543d; }
+        .status-initiated { background: #ffd6cc; color: #c53030; }
+        .status-in-progress { background: #fef5e7; color: #d69e2e; }
 
-            .empty-calls {
-                text-align: center;
-                padding: 60px 30px;
-                color: #4a5568;
-            }
+        .empty-calls {
+            text-align: center;
+            padding: 60px 30px;
+            color: #4a5568;
+        }
 
-            .empty-calls h3 {
-                font-size: 1.5rem;
-                margin-bottom: 15px;
-            }
+        .empty-calls h3 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+        }
 
-            .webhook-url {
-                background: #f7fafc;
-                padding: 15px;
-                border-radius: 10px;
-                margin-top: 20px;
-                border-left: 4px solid #667eea;
-            }
+        .webhook-url {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            border-left: 4px solid #667eea;
+        }
 
-            .webhook-url strong {
-                color: #667eea;
-                font-family: 'Courier New', monospace;
-            }
-            .conversation-group {
-                background: rgba(255, 255, 255, 0.9);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 30px;
-                margin-bottom: 30px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            }
-            .conversation-header {
-                font-size: 1.5rem;
-                font-weight: 700;
-                color: #2d3748;
-                margin-bottom: 15px;
-                border-bottom: 2px solid #667eea;
-                padding-bottom: 10px;
-            }
-            .calls-table {
-                margin-top: 20px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>WasteKing Call Tracker</h1>
-                <p>ElevenLabs AI Agent Call Tracking & Follow-up System</p>
-            </div>
+        .webhook-url strong {
+            color: #667eea;
+            font-family: 'Courier New', monospace;
+        }
+        .conversation-group {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+        .conversation-header {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .calls-table {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>WasteKing Call Tracker</h1>
+            <p>ElevenLabs AI Agent Call Tracking & Follow-up System</p>
+        </div>
 
-            <div class="config-info">
-                <h3>System Configuration</h3>
-                <div class="config-grid">
-                    <div class="config-item">
-                        <div class="config-label">ElevenLabs API Key</div>
-                        <div class="config-value {{ 'status-ok' if elevenlabs_configured else 'status-missing' }}">
-                            {{ 'Configured' if elevenlabs_configured else 'Not configured' }}
-                        </div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Agent Phone Number ID</div>
-                        <div class="config-value">{{ agent_phone_id or 'Not set' }}</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Agent ID</div>
-                        <div class="config-value">{{ agent_id or 'Not set' }}</div>
-                    </div>
-                    <div class="config-item">
-                        <div class="config-label">Supplier Phone</div>
-                        <div class="config-value status-ok">{{ supplier_phone }}</div>
+        <div class="config-info">
+            <h3>System Configuration</h3>
+            <div class="config-grid">
+                <div class="config-item">
+                    <div class="config-label">ElevenLabs API Key</div>
+                    <div class="config-value {{ 'status-ok' if elevenlabs_configured else 'status-missing' }}">
+                        {{ 'Configured' if elevenlabs_configured else 'Not configured' }}
                     </div>
                 </div>
-                
-                <div class="webhook-url">
-                    <strong>Webhook URL for ElevenLabs:</strong><br>
-                    {{ webhook_url }}
+                <div class="config-item">
+                    <div class="config-label">Agent Phone Number ID</div>
+                    <div class="config-value">{{ agent_phone_id or 'Not set' }}</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Agent ID</div>
+                    <div class="config-value">{{ agent_id or 'Not set' }}</div>
+                </div>
+                <div class="config-item">
+                    <div class="config-label">Supplier Phone</div>
+                    <div class="config-value status-ok">{{ supplier_phone }}</div>
                 </div>
             </div>
-
-            <div class="calls-section">
-                <div class="calls-header">
-                    <h2 class="calls-title">Recent Calls ({{ call_count }})</h2>
-                    <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
-                </div>
-
-                {% if grouped_calls %}
-                {% for conv_id, calls in grouped_calls.items() %}
-                <div class="conversation-group">
-                    <div class="conversation-header">Conversation ID: {{ conv_id }}</div>
-                    <table class="calls-table">
-                        <thead>
-                            <tr>
-                                <th>Time</th>
-                                <th>Type</th>
-                                <th>Customer Phone</th>
-                                <th>Duration</th>
-                                <th>Status</th>
-                                <th>Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for call in calls %}
-                            <tr>
-                                <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
-                                <td>{{ call.call_type or 'Customer Call' }}</td>
-                                <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
-                                <td>{{ call.duration or 0 }}s</td>
-                                <td>
-                                    <span class="call-status status-{{ call.status or 'completed' }}">
-                                        {{ (call.status or 'completed').title() }}
-                                    </span>
-                                </td>
-                                <td>
-                                    {% if call.transcript %}
-                                        {{ call.transcript[:100] }}...
-                                    {% elif call.customer_request %}
-                                        {{ call.customer_request[:100] }}...
-                                    {% else %}
-                                        No details
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% endfor %}
-                {% else %}
-                <div class="empty-calls">
-                    <h3>No Calls Yet</h3>
-                    <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
-                </div>
-                {% endif %}
+            
+            <div class="webhook-url">
+                <strong>Webhook URL for ElevenLabs:</strong><br>
+                {{ webhook_url }}
             </div>
         </div>
 
-        <script>
-            // Simple auto-refresh every 30 seconds - no AJAX calls
-            setTimeout(() => {
-                window.location.reload();
-            }, 30000);
-            
-            // Remove any error-prone fetch calls
-            console.log('Dashboard loaded successfully');
-        </script>
-    </body>
-    </html>
+        <div class="calls-section">
+            <div class="calls-header">
+                <h2 class="calls-title">Recent Calls ({{ call_count }})</h2>
+                <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
+            </div>
+
+            {% if grouped_calls %}
+            {% for conv_id, calls in grouped_calls.items() %}
+            <div class="conversation-group">
+                <div class="conversation-header">Conversation ID: {{ conv_id }}</div>
+                <table class="calls-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Type</th>
+                            <th>Customer Phone</th>
+                            <th>Duration</th>
+                            <th>Status</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for call in calls %}
+                        <tr>
+                            <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
+                            <td>{{ call.call_type or 'Customer Call' }}</td>
+                            <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
+                            <td>{{ call.duration or 0 }}s</td>
+                            <td>
+                                <span class="call-status status-{{ call.status or 'completed' }}">
+                                    {{ (call.status or 'completed').title() }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if call.transcript %}
+                                    {{ call.transcript[:100] }}...
+                                {% elif call.customer_request %}
+                                    {{ call.customer_request[:100] }}...
+                                {% else %}
+                                    No details
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="empty-calls">
+                <h3>No Calls Yet</h3>
+                <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Simple auto-refresh every 30 seconds - no AJAX calls
+        setTimeout(() => {
+            window.location.reload();
+        }, 30000);
+        
+        // Remove any error-prone fetch calls
+        console.log('Dashboard loaded successfully');
+    </script>
+</body>
+</html>
     """
     
     return render_template_string(html_template,
@@ -648,14 +648,13 @@ def get_webhook_calls():
 
 @app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
-    """Main endpoint for processing customer messages with enhanced supplier enquiry"""
+    """Main endpoint for processing customer messages"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"success": False, "message": "No data provided"}), 400
         
         customer_message = data.get('customerquestion', '').strip()
-        customer_phone = data.get('customerphone', 'N/A')
         
         # Use provided conversation_id OR create new one only for new conversations
         conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id') or data.get('system__conversation_id')
@@ -665,57 +664,32 @@ def process_message():
         else:
             print(f"🔄 CONTINUING CONVERSATION: {conversation_id}")
         
-        # Store key details in conversation state for webhook
-        if conversation_id not in shared_conversations:
-            shared_conversations[conversation_id] = {}
-        shared_conversations[conversation_id]['customer_phone'] = customer_phone
-        
         print(f"📩 Message: {customer_message}")
         print(f"🆔 Conversation: {conversation_id}")
         
         if not customer_message:
             return jsonify({"success": False, "message": "No message provided"}), 400
         
-        # Route to appropriate agent
-        response_message = route_to_agent(customer_message, conversation_id)
+        # Route to appropriate agent with FIXED routing
+        response = route_to_agent(customer_message, conversation_id)
         
-        print(f"🤖 Response: {response_message}")
+        print(f"🤖 Response: {response}")
         
-        # NEW: Check if the response indicates a transfer or a call back is needed
-        response_lower = response_message.lower()
-        transfer_keywords = ['transferring you', 'call our team directly', 'connect you']
-        callback_keywords = ['call you back', 'contact you shortly']
-        
-        if any(word in response_lower for word in transfer_keywords) or \
-           any(word in response_lower for word in callback_keywords):
-            
-            # Create a summary of the conversation
-            conversation_summary = (
-                f"Customer asked about '{shared_conversations[conversation_id].get('service', 'unspecified')}', "
-                f"at postcode '{shared_conversations[conversation_id].get('postcode', 'N/A')}', "
-                f"request: '{customer_message}'. "
-                f"Agent response: '{response_message}'."
-            )
-            
-            # Send the webhook
-            send_make_webhook(shared_conversations[conversation_id], conversation_summary)
-
         return jsonify({
             "success": True,
-            "message": response_message,
+            "message": response,
             "conversation_id": conversation_id,
             "timestamp": datetime.now().isoformat()
         })
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        # If error occurs, transfer to supplier
         return jsonify({
-            "success": True,
-            "message": f"Let me connect you with our team who can help immediately. Please call {SUPPLIER_PHONE} or hold while I transfer you.",
-            "error": str(e),
-            "transfer_to": SUPPLIER_PHONE
-        }), 200
+            "success": False,
+            "message": "I'll connect you with our team who can help immediately.",
+            "error": str(e)
+        }), 500
+
 
 @app.route('/api/health')
 def health():
