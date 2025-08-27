@@ -10,7 +10,7 @@ app = Flask(__name__)
 elevenlabs_api_key = os.getenv('ELEVENLABS_API_KEY')
 agent_phone_number_id = os.getenv('AGENT_PHONE_NUMBER_ID') 
 agent_id = os.getenv('AGENT_ID')
-SUPPLIER_PHONE = '+447394642517'
+SUPPLIER_PHONE = '+447823656762'
 
 # Global conversation counter and call storage
 conversation_counter = 0
