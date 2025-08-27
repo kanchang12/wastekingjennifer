@@ -3,6 +3,7 @@ import json
 import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
+from collections import defaultdict
 
 app = Flask(__name__)
 
@@ -12,15 +13,73 @@ agent_phone_number_id = os.getenv('AGENT_PHONE_NUMBER_ID')
 agent_id = os.getenv('AGENT_ID')
 SUPPLIER_PHONE = '+447823656762'
 
+# NEW: Make.com webhook URL for out-of-office callbacks
+MAKE_WEBHOOK_URL = os.getenv('MAKE_WEBHOOK_URL')
+
 # Global conversation counter and call storage
 conversation_counter = 0
 webhook_calls = []  # Store webhook call data
+
+# NEW: Enhanced conversation tracking by conversation ID
+conversations_by_id = defaultdict(lambda: {
+    'conversation_id': '',
+    'calls': [],
+    'messages': [],
+    'customer_data': {},
+    'agent_responses': [],
+    'status': 'active',
+    'created_at': datetime.now().isoformat(),
+    'last_activity': datetime.now().isoformat(),
+    'call_summary': {}
+})
 
 def get_next_conversation_id():
     """Generate next conversation ID with counter"""
     global conversation_counter
     conversation_counter += 1
     return f"conv{conversation_counter:08d}"
+
+# NEW: Send callback request to make.com webhook
+def send_callback_to_make(conversation_id, customer_data, reason="out_of_office"):
+    """Send callback request details to make.com webhook for email notification"""
+    if not MAKE_WEBHOOK_URL:
+        print("⚠️ MAKE_WEBHOOK_URL not configured")
+        return False
+    
+    try:
+        # Prepare callback summary data
+        callback_data = {
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat(),
+            "reason": reason,
+            "customer_name": customer_data.get('firstName', 'Not provided'),
+            "customer_phone": customer_data.get('phone', 'Not provided'),
+            "customer_postcode": customer_data.get('postcode', 'Not provided'),
+            "service_requested": customer_data.get('service', 'Not specified'),
+            "waste_type": customer_data.get('waste_type', 'Not specified'),
+            "callback_type": "out_of_office",
+            "priority": "normal"
+        }
+        
+        print(f"📧 Sending callback request to Make.com: {callback_data}")
+        
+        response = requests.post(
+            MAKE_WEBHOOK_URL,
+            json=callback_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Callback request sent to Make.com successfully")
+            return True
+        else:
+            print(f"❌ Failed to send callback to Make.com: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Make.com webhook error: {e}")
+        return False
 
 def supplier_enquiry(customer_request, conversation_id, price):
     """NEW: Call supplier for enquiry during pricing - uses ElevenLabs Twilio outbound call"""
@@ -68,6 +127,9 @@ def supplier_enquiry(customer_request, conversation_id, price):
                 'status': 'initiated'
             }
             webhook_calls.append(supplier_call)
+            
+            # NEW: Also add to conversation tracking
+            conversations_by_id[conversation_id]['calls'].append(supplier_call)
             
             return {"success": True, "call_id": call_info.get('call_id'), "supplier_call": supplier_call}
         else:
@@ -130,8 +192,6 @@ grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 grab_agent.supplier_phone = SUPPLIER_PHONE
 
-
-
 # Link the supplier_enquiry function to all agents
 set_supplier_enquiry_function(supplier_enquiry)
 
@@ -149,6 +209,7 @@ print(f"   WASTEKING_ACCESS_TOKEN: {'Set' if os.getenv('WASTEKING_ACCESS_TOKEN')
 print(f"   ELEVENLABS_API_KEY: {'Set' if elevenlabs_api_key else 'Not set'}")
 print(f"   AGENT_PHONE_NUMBER_ID: {agent_phone_number_id or 'Not set'}")
 print(f"   AGENT_ID: {agent_id or 'Not set'}")
+print(f"   MAKE_WEBHOOK_URL: {'Set' if MAKE_WEBHOOK_URL else 'Not set'}")
 
 def is_office_hours():
     """Check if it's office hours for supplier confirmation"""
@@ -170,6 +231,15 @@ def route_to_agent(message, conversation_id):
     
     print(f"🔍 ROUTING ANALYSIS: '{message_lower}'")
     
+    # NEW: Track this message in conversation
+    conversations_by_id[conversation_id]['messages'].append({
+        'timestamp': datetime.now().isoformat(),
+        'message': message,
+        'type': 'customer_message'
+    })
+    conversations_by_id[conversation_id]['last_activity'] = datetime.now().isoformat()
+    conversations_by_id[conversation_id]['conversation_id'] = conversation_id
+    
     # Check conversation context first
     context = shared_conversations.get(conversation_id, {})
     existing_service = context.get('service')
@@ -189,30 +259,126 @@ def route_to_agent(message, conversation_id):
     # PRIORITY 1: Skip Agent - ONLY explicit skip mentions
     if any(word in message_lower for word in ['skip', 'skip hire', 'yard skip', 'cubic yard']):
         print("🔄 Routing to Skip Agent (explicit skip mention)")
-        return skip_agent.process_message(message, conversation_id)
+        response = skip_agent.process_message(message, conversation_id)
+        
+        # NEW: Track agent response and check for out-of-office callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'skip'
+        })
+        
+        # Check if response mentions callback and send to make.com
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow',
+            'team call you back', 'our team will contact', 'call you first thing'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
     
     # PRIORITY 2: MAV Agent - ONLY explicit man and van mentions  
     elif any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'small van', 'medium van', 'large van']):
         print("🔄 Routing to MAV Agent (explicit mav mention)")
-        return mav_agent.process_message(message, conversation_id)
+        response = mav_agent.process_message(message, conversation_id)
+        
+        # NEW: Track agent response and check for out-of-office callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'mav'
+        })
+        
+        # Check if response mentions callback and send to make.com
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow',
+            'team call you back', 'our team will contact', 'call you first thing'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
     
     # PRIORITY 3: Grab Agent - explicit grab mentions
     elif any(word in message_lower for word in ['grab', 'grab hire', 'grab lorry', '6 wheeler', '8 wheeler']):
         print("🔄 Routing to Grab Agent (explicit grab mention)")
-        return grab_agent.process_message(message, conversation_id)
+        response = grab_agent.process_message(message, conversation_id)
+        
+        # NEW: Track agent response and check for out-of-office callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'grab'
+        })
+        
+        # Check if response mentions callback and send to make.com
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow',
+            'team call you back', 'our team will contact', 'call you first thing'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
     
     # PRIORITY 4: Continue with existing service if available
     elif existing_service == 'skip':
         print("🔄 Routing to Skip Agent (continuing existing skip conversation)")
-        return skip_agent.process_message(message, conversation_id)
+        response = skip_agent.process_message(message, conversation_id)
+        
+        # NEW: Track and check for callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'skip'
+        })
+        
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
     
     elif existing_service == 'mav':
         print("🔄 Routing to MAV Agent (continuing existing mav conversation)")
-        return mav_agent.process_message(message, conversation_id)
+        response = mav_agent.process_message(message, conversation_id)
+        
+        # NEW: Track and check for callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'mav'
+        })
+        
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
         
     elif existing_service == 'grab':
         print("🔄 Routing to Grab Agent (continuing existing grab conversation)")
-        return grab_agent.process_message(message, conversation_id)
+        response = grab_agent.process_message(message, conversation_id)
+        
+        # NEW: Track and check for callbacks
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'grab'
+        })
+        
+        if any(phrase in response.lower() for phrase in [
+            'call you back', 'callback', 'team will call', 'call back tomorrow'
+        ]):
+            customer_data = shared_conversations.get(conversation_id, {})
+            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
+        
+        return response
         
     elif existing_service == 'qualifying':
         pass
@@ -220,17 +386,26 @@ def route_to_agent(message, conversation_id):
     # PRIORITY 5: NEW - Qualifying Agent handles EVERYTHING ELSE (unknown/other services)
     else:
         print("🔄 Routing to Qualifying Agent (handles all other requests and unknown services)")
-        return "nill"
+        response = "I can help you with skip hire, man & van services, and grab lorry services. What type of waste removal service do you need?"
+        
+        # NEW: Track response
+        conversations_by_id[conversation_id]['agent_responses'].append({
+            'timestamp': datetime.now().isoformat(),
+            'response': response,
+            'agent_type': 'qualifying'
+        })
+        
+        return response
 
 @app.route('/')
 def index():
-    """ENHANCED: Render the call tracking dashboard with call list"""
+    """NEW: Enhanced dashboard showing conversations by ID"""
     html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WasteKing Call Tracker</title>
+    <title>WasteKing Enhanced Call Tracker</title>
     <style>
         * {
             margin: 0;
@@ -246,7 +421,7 @@ def index():
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
         }
 
@@ -309,7 +484,7 @@ def index():
         .status-ok { color: #48bb78; }
         .status-missing { color: #f56565; }
 
-        .calls-section {
+        .conversations-section {
             background: rgba(255, 255, 255, 0.9);
             backdrop-filter: blur(10px);
             border-radius: 20px;
@@ -318,14 +493,14 @@ def index():
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
         }
 
-        .calls-header {
+        .conversations-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 25px;
         }
 
-        .calls-title {
+        .conversations-title {
             color: #2d3748;
             font-size: 1.8rem;
             font-weight: 700;
@@ -346,50 +521,117 @@ def index():
             background: #5a67d8;
         }
 
-        .calls-table {
-            width: 100%;
-            border-collapse: collapse;
+        .conversation-card {
             background: white;
-            border-radius: 10px;
-            overflow: hidden;
+            border-radius: 15px;
+            margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
         }
 
-        .calls-table th {
+        .conversation-header {
             background: #667eea;
             color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .calls-table td {
-            padding: 15px;
-            border-bottom: 1px solid #e2e8f0;
+        .conversation-id {
+            font-weight: 700;
+            font-size: 1.2rem;
         }
 
-        .calls-table tr:hover {
-            background: #f7fafc;
-        }
-
-        .call-status {
+        .conversation-status {
             padding: 4px 12px;
             border-radius: 15px;
             font-size: 0.8rem;
             font-weight: 600;
+            background: rgba(255, 255, 255, 0.2);
         }
 
-        .status-completed { background: #c6f6d5; color: #22543d; }
-        .status-initiated { background: #ffd6cc; color: #c53030; }
-        .status-in-progress { background: #fef5e7; color: #d69e2e; }
+        .conversation-details {
+            padding: 20px;
+        }
 
-        .empty-calls {
+        .customer-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            color: #2d3748;
+            font-weight: 500;
+        }
+
+        .messages-timeline {
+            margin-top: 20px;
+        }
+
+        .timeline-item {
+            display: flex;
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 10px;
+        }
+
+        .customer-message {
+            background: #e6fffa;
+            border-left: 4px solid #38b2ac;
+        }
+
+        .agent-response {
+            background: #f0fff4;
+            border-left: 4px solid #48bb78;
+        }
+
+        .message-timestamp {
+            font-size: 0.8rem;
+            color: #4a5568;
+            margin-bottom: 5px;
+        }
+
+        .message-content {
+            color: #2d3748;
+            line-height: 1.5;
+        }
+
+        .agent-type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #667eea;
+            color: white;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            margin-left: 10px;
+        }
+
+        .empty-conversations {
             text-align: center;
             padding: 60px 30px;
             color: #4a5568;
         }
 
-        .empty-calls h3 {
+        .empty-conversations h3 {
             font-size: 1.5rem;
             margin-bottom: 15px;
         }
@@ -411,8 +653,8 @@ def index():
 <body>
     <div class="container">
         <div class="header">
-            <h1>WasteKing Call Tracker</h1>
-            <p>ElevenLabs AI Agent Call Tracking & Follow-up System</p>
+            <h1>WasteKing Enhanced Call Tracker</h1>
+            <p>Complete Conversation Tracking with Make.com Integration</p>
         </div>
 
         <div class="config-info">
@@ -433,6 +675,12 @@ def index():
                     <div class="config-value">{{ agent_id or 'Not set' }}</div>
                 </div>
                 <div class="config-item">
+                    <div class="config-label">Make.com Webhook</div>
+                    <div class="config-value {{ 'status-ok' if make_configured else 'status-missing' }}">
+                        {{ 'Configured' if make_configured else 'Not configured' }}
+                    </div>
+                </div>
+                <div class="config-item">
                     <div class="config-label">Supplier Phone</div>
                     <div class="config-value status-ok">{{ supplier_phone }}</div>
                 </div>
@@ -440,84 +688,115 @@ def index():
             
             <div class="webhook-url">
                 <strong>Webhook URL for ElevenLabs:</strong><br>
-                {{ webhook_url }}
+                {{ webhook_url }}<br><br>
+                <strong>Features:</strong> Out-of-office callback detection & Make.com email integration
             </div>
         </div>
 
-        <div class="calls-section">
-            <div class="calls-header">
-                <h2 class="calls-title">Recent Calls ({{ call_count }})</h2>
+        <div class="conversations-section">
+            <div class="conversations-header">
+                <h2 class="conversations-title">Live Conversations ({{ conversation_count }})</h2>
                 <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
             </div>
 
-            {% if calls %}
-            <table class="calls-table">
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Type</th>
-                        <th>Customer Phone</th>
-                        <th>Duration</th>
-                        <th>Status</th>
-                        <th>Conversation ID</th>
-                        <th>Details</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for call in calls %}
-                    <tr>
-                        <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
-                        <td>{{ call.call_type or 'Customer Call' }}</td>
-                        <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
-                        <td>{{ call.duration or 0 }}s</td>
-                        <td>
-                            <span class="call-status status-{{ call.status or 'completed' }}">
-                                {{ (call.status or 'completed').title() }}
-                            </span>
-                        </td>
-                        <td>{{ call.conversation_id or 'N/A' }}</td>
-                        <td>
-                            {% if call.transcript %}
-                                {{ call.transcript[:100] }}...
-                            {% elif call.customer_request %}
-                                {{ call.customer_request[:100] }}...
-                            {% else %}
-                                No details
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            {% if conversations %}
+                {% for conv_id, conv_data in conversations %}
+                <div class="conversation-card">
+                    <div class="conversation-header">
+                        <div class="conversation-id">{{ conv_id }}</div>
+                        <div class="conversation-status">{{ conv_data.status.title() }}</div>
+                    </div>
+                    
+                    <div class="conversation-details">
+                        <!-- Customer Information -->
+                        {% if conv_data.customer_data or shared_conversations.get(conv_id) %}
+                        <div class="customer-info">
+                            <div class="info-item">
+                                <div class="info-label">Customer Name</div>
+                                <div class="info-value">{{ shared_conversations.get(conv_id, {}).get('firstName', 'Not provided') }}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Phone</div>
+                                <div class="info-value">{{ shared_conversations.get(conv_id, {}).get('phone', 'Not provided') }}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Postcode</div>
+                                <div class="info-value">{{ shared_conversations.get(conv_id, {}).get('postcode', 'Not provided') }}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Service</div>
+                                <div class="info-value">{{ shared_conversations.get(conv_id, {}).get('service', 'Not specified') }}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Last Activity</div>
+                                <div class="info-value">{{ conv_data.last_activity[:19] if conv_data.last_activity else 'N/A' }}</div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Messages Timeline -->
+                        {% if conv_data.messages or conv_data.agent_responses %}
+                        <div class="messages-timeline">
+                            <h4 style="margin-bottom: 15px; color: #2d3748;">Conversation Timeline</h4>
+                            
+                            <!-- Combine and sort messages and responses by timestamp -->
+                            {% for item in (conv_data.messages + conv_data.agent_responses) | sort(attribute='timestamp') %}
+                                {% if item.message %}
+                                <!-- Customer Message -->
+                                <div class="timeline-item customer-message">
+                                    <div style="flex: 1;">
+                                        <div class="message-timestamp">Customer - {{ item.timestamp[:19] }}</div>
+                                        <div class="message-content">{{ item.message }}</div>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <!-- Agent Response -->
+                                <div class="timeline-item agent-response">
+                                    <div style="flex: 1;">
+                                        <div class="message-timestamp">
+                                            Agent Response - {{ item.timestamp[:19] }}
+                                            <span class="agent-type">{{ item.agent_type.upper() }}</span>
+                                        </div>
+                                        <div class="message-content">{{ item.response }}</div>
+                                    </div>
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
             {% else %}
-            <div class="empty-calls">
-                <h3>No Calls Yet</h3>
-                <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
+            <div class="empty-conversations">
+                <h3>No Active Conversations</h3>
+                <p>System is ready to track conversations and send callback notifications to Make.com</p>
             </div>
             {% endif %}
         </div>
     </div>
 
     <script>
-        // Simple auto-refresh every 30 seconds - no AJAX calls
+        // Auto-refresh every 30 seconds
         setTimeout(() => {
             window.location.reload();
         }, 30000);
         
-        // Remove any error-prone fetch calls
-        console.log('Dashboard loaded successfully');
+        console.log('Enhanced dashboard loaded - tracking {{ conversation_count }} conversations');
     </script>
 </body>
 </html>"""
     
     return render_template_string(html_template,
         elevenlabs_configured=bool(elevenlabs_api_key),
+        make_configured=bool(MAKE_WEBHOOK_URL),
         agent_phone_id=agent_phone_number_id,
         agent_id=agent_id,
         supplier_phone=SUPPLIER_PHONE,
         webhook_url=request.url_root + 'api/webhook/elevenlabs',
-        calls=sorted(webhook_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:50],  # Show latest 50 calls
-        call_count=len(webhook_calls)
+        conversations=sorted(conversations_by_id.items(), key=lambda x: x[1].get('last_activity', ''), reverse=True),
+        conversation_count=len(conversations_by_id),
+        shared_conversations=shared_conversations
     )
 
 @app.route('/api/webhook/elevenlabs', methods=['POST'])
@@ -537,13 +816,19 @@ def elevenlabs_webhook():
             'customer_phone': data.get('customer_phone', '') or data.get('from_number', ''),
             'to_number': data.get('to_number', ''),
             'status': data.get('status', 'completed'),
-            'call_type': data.get('call_type', 'customer_call'),  # customer_call or supplier_enquiry
+            'call_type': data.get('call_type', 'customer_call'),
             'agent_id': data.get('agent_id', ''),
             'metadata': data.get('metadata', {}),
-            'raw_data': data  # Store full webhook payload
+            'raw_data': data
         }
         
         webhook_calls.append(call_data)
+        
+        # NEW: Also add to conversation tracking
+        conv_id = data.get('conversation_id', '')
+        if conv_id:
+            conversations_by_id[conv_id]['calls'].append(call_data)
+            conversations_by_id[conv_id]['last_activity'] = datetime.now().isoformat()
         
         print(f"📞 Webhook stored: {call_data['id']} - Status: {call_data['status']}")
         
@@ -562,7 +847,7 @@ def get_webhook_calls():
         status = request.args.get('status')   # completed, initiated, in-progress
         limit = int(request.args.get('limit', 100))
         
-        filtered_calls = webhook_calls.copy()  # Make a copy to avoid modification issues
+        filtered_calls = webhook_calls.copy()
         
         if call_type:
             filtered_calls = [call for call in filtered_calls if call.get('call_type') == call_type]
@@ -574,7 +859,7 @@ def get_webhook_calls():
         try:
             sorted_calls = sorted(filtered_calls, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
         except:
-            sorted_calls = filtered_calls[:limit]  # Fallback if sorting fails
+            sorted_calls = filtered_calls[:limit]
         
         response_data = {
             "success": True, 
@@ -583,7 +868,6 @@ def get_webhook_calls():
             "filtered_count": len(sorted_calls)
         }
         
-        # Ensure proper JSON response
         response = jsonify(response_data)
         response.headers['Content-Type'] = 'application/json'
         return response
@@ -593,6 +877,50 @@ def get_webhook_calls():
         error_response = jsonify({"success": False, "error": str(e), "calls": []})
         error_response.headers['Content-Type'] = 'application/json'
         return error_response, 500
+
+# NEW: API endpoint to get conversations data
+@app.route('/api/conversations', methods=['GET'])
+def get_conversations():
+    """Get all conversation data organized by conversation ID"""
+    try:
+        conversation_list = []
+        for conv_id, conv_data in conversations_by_id.items():
+            # Include customer data from shared_conversations
+            customer_info = shared_conversations.get(conv_id, {})
+            conv_summary = {
+                'conversation_id': conv_id,
+                'status': conv_data['status'],
+                'created_at': conv_data['created_at'],
+                'last_activity': conv_data['last_activity'],
+                'message_count': len(conv_data['messages']),
+                'response_count': len(conv_data['agent_responses']),
+                'call_count': len(conv_data['calls']),
+                'customer_data': {
+                    'name': customer_info.get('firstName', ''),
+                    'phone': customer_info.get('phone', ''),
+                    'postcode': customer_info.get('postcode', ''),
+                    'service': customer_info.get('service', ''),
+                    'waste_type': customer_info.get('waste_type', ''),
+                    'price': customer_info.get('price', '')
+                },
+                'messages': conv_data['messages'],
+                'agent_responses': conv_data['agent_responses'],
+                'calls': conv_data['calls']
+            }
+            conversation_list.append(conv_summary)
+        
+        # Sort by last activity
+        conversation_list.sort(key=lambda x: x['last_activity'], reverse=True)
+        
+        return jsonify({
+            "success": True,
+            "conversations": conversation_list,
+            "total_count": len(conversation_list)
+        })
+        
+    except Exception as e:
+        print(f"❌ Get conversations error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
@@ -618,7 +946,7 @@ def process_message():
         if not customer_message:
             return jsonify({"success": False, "message": "No message provided"}), 400
         
-        # Route to appropriate agent with ENHANCED routing including QualifyingAgent
+        # Route to appropriate agent with ENHANCED routing including callback detection
         response = route_to_agent(customer_message, conversation_id)
         
         print(f"🤖 Response: {response}")
@@ -632,7 +960,6 @@ def process_message():
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        # If error occurs, transfer to supplier
         return jsonify({
             "success": True,
             "message": f"Let me connect you with our team who can help immediately. Please call {SUPPLIER_PHONE} or hold while I transfer you.",
@@ -648,18 +975,20 @@ def health():
         "timestamp": datetime.now().isoformat(),
         "agents": ["Skip", "MAV", "Grab"],
         "elevenlabs_configured": bool(elevenlabs_api_key),
+        "make_webhook_configured": bool(MAKE_WEBHOOK_URL),
         "supplier_phone": SUPPLIER_PHONE,
         "office_hours": is_office_hours(),
         "features": [
             "ElevenLabs webhook integration",
             "Supplier enquiry calls during pricing",
-            "Enhanced call tracking dashboard", 
-            "Qualifying agent for unknown services",
-            "Real-time call display",
+            "Enhanced conversation tracking by ID", 
+            "Make.com callback email integration",
+            "Real-time conversation display",
             "All transfers to +447394642517"
         ],
-        "call_stats": {
+        "stats": {
             "total_calls": len(webhook_calls),
+            "active_conversations": len(conversations_by_id),
             "recent_calls": len([call for call in webhook_calls if (datetime.now() - datetime.fromisoformat(call['timestamp'].replace('Z', '+00:00').replace('+00:00', ''))).days < 1]) if webhook_calls else 0
         }
     })
@@ -674,13 +1003,15 @@ def test_page():
         <title>WasteKing Test Page</title>
     </head>
     <body>
-        <h1>WasteKing System Test</h1>
+        <h1>WasteKing Enhanced System Test</h1>
         <p>If you can see this page, the Flask app is running correctly.</p>
         <p>System Status: <strong>ONLINE</strong></p>
+        <p>New Features: <strong>Conversation tracking + Make.com integration</strong></p>
         <ul>
             <li><a href="/">Main Dashboard</a></li>
             <li><a href="/api/health">Health Check API</a></li>
             <li><a href="/api/webhook/calls">Webhook Calls API</a></li>
+            <li><a href="/api/conversations">Conversations API</a></li>
         </ul>
     </body>
     </html>
@@ -695,12 +1026,13 @@ def after_request(response):
     return response
 
 if __name__ == '__main__':
-    print("🚀 Starting Enhanced WasteKing ElevenLabs Integration System...")
+    print("🚀 Starting Enhanced WasteKing System with Make.com Integration...")
     print("🔧 NEW FEATURES:")
     print(f"  📞 Supplier enquiry calls during pricing to: {SUPPLIER_PHONE}")
-    print(f"  📊 Enhanced call tracking dashboard with real-time updates")
-    print(f"  🎯 New qualifying agent for unknown/other services")
+    print(f"  📊 Complete conversation tracking by ID")
+    print(f"  📧 Out-of-office callback detection & Make.com email integration")
     print(f"  🔄 All transfers go to: {SUPPLIER_PHONE}")
     print(f"  📡 ElevenLabs webhook: {'Configured' if elevenlabs_api_key else 'Not configured'}")
+    print(f"  🔗 Make.com webhook: {'Configured' if MAKE_WEBHOOK_URL else 'Not configured'}")
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
