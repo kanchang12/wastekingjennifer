@@ -91,27 +91,31 @@ def index():
         call_count=len(webhook_calls)
     )
 
-def elevenlabs_webhook():
+@app.route('/api/dashboard/live_calls', methods=['GET'])
+def get_live_calls():
+    """New endpoint for the dashboard to get live call updates."""
     try:
-        data = request.get_json()
-        call_data = {
-            'id': f"call_{datetime.now().timestamp()}",
-            'timestamp': datetime.now().isoformat(),
-            'transcript': data.get('transcript', ''),
-            'duration': data.get('duration', 0),
-            'conversation_id': data.get('conversation_id', ''),
-            'customer_phone': data.get('customer_phone', '') or data.get('from_number', ''),
-            'to_number': data.get('to_number', ''),
-            'status': data.get('status', 'completed'),
-            'call_type': data.get('call_type', 'customer_call'),
-            'metadata': data.get('metadata', {}),
-            'raw_data': data
-        }
-        webhook_calls.append(call_data)
-        print(f"Webhook received and stored: {call_data['id']}")
-        return jsonify({"success": True, "message": "Webhook received", "call_id": call_data['id']})
+        last_conv_id = request.args.get('last_id')
+        new_calls = []
+        found_last = False
+        
+        # Iterate backward to find the last received call
+        for call in reversed(webhook_calls):
+            if call.get('conversation_id') == last_conv_id:
+                found_last = True
+                break
+            new_calls.append(call)
+        
+        # Reverse the list to get them in chronological order
+        new_calls.reverse()
+        
+        return jsonify({
+            "success": True,
+            "new_calls": new_calls,
+            "total_count": len(webhook_calls)
+        })
     except Exception as e:
-        print(f"Webhook error: {e}")
+        print(f"Live calls API error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/wasteking-chatbot.js')
