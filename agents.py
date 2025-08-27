@@ -869,3 +869,16 @@ class GrabAgent(BaseAgent):
                 return self.complete_booking(state)
 
         return "I can help you with grab lorry service for soil and rubble removal. Can I take your name please?"
+
+
+# Function to set supplier_enquiry reference from main app
+def set_supplier_enquiry_function(func):
+    global supplier_enquiry
+    supplier_enquiry = func
+    print("✅ Supplier enquiry function linked to agents")
+
+# Function to set transfer_call_to_supplier reference from main app  
+def set_transfer_function(func):
+    global transfer_call_to_supplier
+    transfer_call_to_supplier = func
+    print("✅ Transfer function linked to agents")
