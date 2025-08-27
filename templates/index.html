@@ -362,70 +362,78 @@
     </div>
 
 <script>
-        // Use a global variable to keep track of the last known conversation ID
-        let lastConversationId = null;
+    // Store call data in a JavaScript variable for easy access
+    const groupedCalls = JSON.parse('{{ grouped_calls | tojson }}');
 
-        // Function to fetch new calls from the server
-        async function fetchNewCalls() {
-            try {
-                const url = `/api/webhook/calls?last_id=${lastConversationId}`;
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (data.success && data.new_calls.length > 0) {
-                    // Update the last known ID
-                    lastConversationId = data.new_calls[0].conversation_id;
-
-                    // Group new calls by conversation ID
-                    const newGroupedCalls = {};
-                    data.new_calls.forEach(call => {
-                        if (!newGroupedCalls[call.conversation_id]) {
-                            newGroupedCalls[call.conversation_id] = [];
-                        }
-                        newGroupedCalls[call.conversation_id].push(call);
-                    });
-
-                    // Update the HTML
-                    const callsSection = document.querySelector('.calls-section');
-                    let newHtml = '';
-                    for (const convId in newGroupedCalls) {
-                        const calls = newGroupedCalls[convId];
-                        // Render a new conversation group and table
-                        newHtml += `
-                            <div class="conversation-group">
-                                <div class="conversation-header">
-                                    Conversation ID: ${convId}
-                                </div>
-                                <table class="calls-table">
-                                    <thead>
-                                        ... (table headers) ...
-                                    </thead>
-                                    <tbody>
-                                        ${calls.map(call => `
-                                            <tr>
-                                                <td>${call.timestamp.slice(0, 19)}</td>
-                                                <td>${call.call_type || 'Customer Call'}</td>
-                                                <td>${call.customer_phone || call.to_number || 'N/A'}</td>
-                                                <td>${call.duration || 0}s</td>
-                                                <td><span class="call-status status-${call.status || 'completed'}">${(call.status || 'completed').title()}</span></td>
-                                                <td>... (details) ...</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                            </div>
-                        `;
-                    }
-                    callsSection.insertAdjacentHTML('beforeend', newHtml);
-                }
-            } catch (error) {
-                console.error("Failed to fetch new calls:", error);
-            }
+    // Use a global variable to keep track of the last known conversation ID
+    let lastConversationId = null;
+    
+    // Set the initial last conversation ID on page load
+    if (Object.keys(groupedCalls).length > 0) {
+        lastConversationId = Object.keys(groupedCalls)[0];
+    }
+    
+    function showTranscript(convId) {
+        const calls = groupedCalls[convId];
+        if (!calls || calls.length === 0) {
+            return;
         }
 
-        // Fetch new calls every 5 seconds
-        setInterval(fetchNewCalls, 5000);
-    </script>
+        const modalTitle = document.getElementById('modal-title');
+        const transcriptContent = document.getElementById('transcriptContent');
+        const transcriptModal = document.getElementById('transcriptModal');
+        
+        modalTitle.textContent = `Transcript for Conversation ID: ${convId}`;
+        
+        let fullTranscript = '';
+        calls.forEach((call, index) => {
+            fullTranscript += `--- Call Part ${index + 1} (${call.call_type || 'N/A'}) ---\n`;
+            fullTranscript += `Start Time: ${new Date(call.timestamp).toLocaleString()}\n`;
+            fullTranscript += `Duration: ${call.duration}s\n`;
+            fullTranscript += `Status: ${call.status || 'N/A'}\n\n`;
+            fullTranscript += `${call.transcript || 'No transcript available.'}\n\n`;
+        });
+        
+        transcriptContent.textContent = fullTranscript;
+        transcriptModal.style.display = "flex";
+    }
+
+    function closeModal() {
+        const transcriptModal = document.getElementById('transcriptModal');
+        transcriptModal.style.display = "none";
+    }
+
+    window.onclick = function(event) {
+        const transcriptModal = document.getElementById('transcriptModal');
+        if (event.target == transcriptModal) {
+            closeModal();
+        }
+    }
+
+    async function fetchNewCalls() {
+        try {
+            const url = `/api/dashboard/live_calls?last_id=${lastConversationId}`;
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.success && data.new_calls.length > 0) {
+                // Update the last known ID
+                lastConversationId = data.new_calls[0].conversation_id;
+                
+                const callsSection = document.querySelector('.calls-section');
+                
+                // For a simple demonstration, just reload the page to show new calls
+                // A more advanced solution would inject HTML dynamically.
+                window.location.reload();
+            }
+        } catch (error) {
+            console.error("Failed to fetch new calls:", error);
+        }
+    }
+
+    // Fetch new calls every 5 seconds
+    setInterval(fetchNewCalls, 5000);
+</script>
 </body>
 </html>
 
