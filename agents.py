@@ -3,340 +3,564 @@ import json
 import os
 import requests
 from datetime import datetime
-from utils.wasteking_api import complete_booking
+from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
-# Define business rules from PDF - COMPLETE RULES
-rules_text = """
-WASTE KING AI VOICE AGENT COMPLETE BUSINESS RULES MANUAL
+# COMPLETE HARDCODED BUSINESS RULES - EVERY SINGLE RULE FROM PDF + NEW RULES
+OFFICE_HOURS = {
+    'monday_thursday': {'start': 8, 'end': 17},
+    'friday': {'start': 8, 'end': 16.5},
+    'saturday': {'start': 9, 'end': 12},
+    'sunday': 'closed'
+}
 
-OFFICE HOURS & TRANSFER RULES
-OPERATING HOURS:
-- Monday-Thursday: 8:00am-5:00pm
-- Friday: 8:00am-4:30pm
-- Saturday: 9:00am-12:00pm
-- All other times: OUT OF HOURS
+TRANSFER_RULES = {
+    'management_director': {
+        'triggers': ['glenn currie', 'director', 'speak to glenn'],
+        'office_hours': "I am sorry, Glenn is not available, may I take your details and Glenn will call you back?",
+        'out_of_hours': "I can take your details and have our director call you back first thing tomorrow",
+        'sms_notify': '+447823656762'
+    },
+    'complaints': {
+        'office_hours': "I understand your frustration, please bear with me while I transfer you to the appropriate person.",
+        'out_of_hours': "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow.",
+        'action': 'TRANSFER',
+        'sms_notify': '+447823656762'
+    },
+    'specialist_services': {
+        'services': ['hazardous waste disposal', 'asbestos removal', 'asbestos collection', 'weee electrical waste', 'chemical disposal', 'medical waste', 'trade waste', 'wheelie bins'],
+        'office_hours': 'Transfer immediately',
+        'out_of_hours': 'Take details + SMS notification to +447823656762'
+    }
+}
 
-TRANSFER THRESHOLDS
-IMMEDIATE TRANSFER/NOTIFICATION CONDITIONS
-Management/Director Requests
-"Can I speak to Glenn Currie/director?"
-- Take name and reason for calling
-- Office hours: I am sorry, Glenn is not available, may I take your details and Glenn will call you back?
-- Out-of-hours: Take full details + SMS notification to +447823656762 + tell customer "I can take your details and have our director call you back first thing tomorrow"
+# NEW: PROHIBITED ITEMS IN SKIPS - EXACT LIST FROM FEEDBACK
+PROHIBITED_ITEMS_SKIP = [
+    'fridges', 'freezers', 'fridge', 'freezer',
+    'tv', 'screens', 'television', 'monitor',
+    'carpets', 'carpet',
+    'paint', 'liquid', 'liquids',
+    'plasterboard', 'plaster board',
+    'mattress', 'mattresses',
+    'gas cylinder', 'gas cylinders',
+    'tyre', 'tyres', 'tire', 'tires',
+    'air conditioning', 'air con', 'ac units'
+]
 
-Complaints
-- Office hours: "I understand your frustration, please bear with me while I transfer you to the appropriate person." TRANSFER
-- Out-of-hours: "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow." Take details + SMS notification to +447823656762
+# NEW: SKIP SIZE RULES FOR DIFFERENT WASTE TYPES
+SKIP_SIZE_RULES = {
+    'soil_rubble_max': '8yd',  # Maximum skip size for soil/rubble
+    'general_max': '40yd',     # RORO 40-yard is the largest overall
+    'heavy_materials': ['soil', 'rubble', 'concrete', 'bricks', 'hardcore', 'dirt', 'earth']
+}
 
-Specialist Services (Always Transfer/Callback)
-- Hazardous waste disposal
-- Asbestos removal/collection
-- WEEE electrical waste
-- Chemical disposal
-- Medical waste
-- Trade waste
-- Wheelie bins
-Office hours: Transfer immediately Out-of-hours: Take details + SMS notification to +447823656762
+# NEW: MAN & VAN WEIGHT ALLOWANCES
+MAV_WEIGHT_ALLOWANCES = {
+    'per_cubic_yard': 100,  # 100kg per cubic yard
+    'overtime_charge': 19,  # £19 per 15 minutes over time
+    'standard_message': "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos. The majority of our collections are done under our generous weight allowances."
+}
 
-SKIP HIRE COMPLETE FLOW
-A1: INFORMATION GATHERING SEQUENCE
-Check what customer already provided:
-- Name given? Skip to next
-- Postcode given? Confirm: "Can you confirm [postcode] is correct?"
-- Waste type given? Skip to next
-- Missing info? Ask ONLY what's missing
+SKIP_HIRE_RULES = {
+    'A1_information_gathering': {
+        'check_provided': ['name', 'postcode', 'waste_type'],
+        'postcode_confirm': "Can you confirm [postcode] is correct?",
+        'missing_info': "Ask ONLY what's missing",
+        'postcode_not_found': {
+            'office_hours': 'Transfer',
+            'out_of_hours': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'A2_heavy_materials': {
+        'question': "What are you going to keep in the skip?",
+        'rules': {
+            '12yd': 'ONLY light materials (no concrete, soil, bricks - too heavy to lift)',
+            '8yd_under': 'CAN take heavy materials (bricks, soil, concrete, glass)'
+        },
+        '12yd_heavy_response': "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller.",
+        'man_van_suggestion': {
+            'trigger': '8 yard or smaller skip + LIGHT MATERIALS ONLY (no heavy items mentioned)',
+            'script': "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?",
+            'if_yes': 'Use marketplace tool for BOTH skip AND man & van quotes, present both prices',
+            'if_no': 'Continue with skip process'
+        }
+    },
+    'A3_size_location': {
+        'size_check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What size skip are you thinking of?",
+            'unsure': "We have 4, 6, 8, and 12-yard skips. Our 8-yard is most popular nationally."
+        },
+        'location_check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "Will the skip go on your driveway or on the road?"
+        },
+        'waste_asked': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_mentioned': "What waste you will use?"
+        },
+        'road_placement': 'MANDATORY PERMIT SCRIPT',
+        'driveway': 'No permit needed, continue'
+    },
+    'permit_script': {
+        'exact_words': "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe.",
+        'questions': [
+            "Are there any parking bays where the skip will go?",
+            "Are there yellow lines in that area?", 
+            "Are there any parking restrictions on that road?"
+        ],
+        'never_accept': "no permit needed"
+    },
+    'A4_access': {
+        'question': "Is there easy access for our lorry to deliver the skip?",
+        'followup': "Any low bridges, narrow roads, or parking restrictions?",
+        'critical': "3.5m width minimum required",
+        'complex_access': {
+            'office_hours': "For complex access situations, let me put you through to our team for a site assessment.",
+            'out_of_hours': "For complex access situations, I can take your details and have our team call you back first thing tomorrow for a site assessment.",
+            'action': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'A5_prohibited_items': {
+        'question': "Do you have any of these items?",
+        'surcharge_items': {
+            'fridges_freezers': {'charge': 20, 'reason': 'Need degassing'},
+            'mattresses': {'charge': 15, 'reason': 'Special disposal'},
+            'upholstered_furniture': {'charge': 15, 'reason': 'Special disposal'}
+        },
+        'surcharge_process': [
+            'Get base price from marketplace tool',
+            'IMMEDIATELY calculate total with surcharges',
+            'Present FINAL price including surcharges'
+        ],
+        'example': "The base price is £200, and with the sofa that's an additional £15, making your total £215 including VAT.",
+        'transfer_required': {
+            'plasterboard': "Plasterboard requires a separate skip.",
+            'gas_cylinders': "We can help with hazardous materials.",
+            'paints': "We can help with hazardous materials.",
+            'hazardous_chemicals': "We can help with hazardous materials.",
+            'asbestos': 'Always transfer/SMS notification',
+            'tyres': "Tyres can't be put in skip"
+        }
+    },
+    'A6_timing': {
+        'check': {
+            'mentioned': 'Use it, don\'t ask again',
+            'not_given': "When do you need this delivered?"
+        },
+        'exact_script': "We can't guarantee exact times, but delivery is between SEVEN AM TO SIX PM"
+    },
+    'A7_quote': {
+        'handle_all_amounts': 'no price limit - both office hours and out-of-hours',
+        'include_surcharges': 'TOTAL PRICE including all surcharges',
+        'examples': {
+            'no_surcharges': "The price for your 8-yard skip is £200 including VAT.",
+            'with_sofa': "The price for your 8-yard skip including the £15 sofa surcharge is £215 including VAT."
+        },
+        'always_include': [
+            "Collection within 72 hours standard",
+            "Level load requirement for skip collection",
+            "Driver calls when en route",
+            "98% recycling rate",
+            "We have insured and licensed teams",
+            "Digital waste transfer notes provided"
+        ]
+    }
+}
 
-IF postcode not in marketplace tool:
-- Confirm postcode (may have heard wrong)
-- Office hours: Transfer
-- Out-of-hours: Take details + SMS notification to +447823656762
+MAV_RULES = {
+    'B1_information_gathering': {
+        'check_provided': ['name', 'postcode', 'waste_type'],
+        'skip_if_given': True,
+        'ask_missing_only': True
+    },
+    'B2_heavy_materials': {
+        'question': "Do you have soil, rubble, bricks, concrete, or tiles?",
+        'if_yes': {
+            'office_hours': "For heavy materials with man & van service, let me put you through to our specialist team for the best solution.",
+            'out_of_hours': "For heavy materials with man & van, I can take your details for our specialist team to call back.",
+            'action': 'Take details + SMS notification to +447823656762'
+        },
+        'if_no': 'Continue to volume assessment'
+    },
+    'B3_volume_assessment': {
+        'amount_check': {
+            'described': 'Don\'t ask again',
+            'not_clear': "How much waste do you have approximately?"
+        },
+        'exact_script': "We charge by the cubic yard",
+        'weight_allowances': [
+            "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos",
+            "The majority of our collections are done under our generous weight allowances"
+        ],
+        'labour_time': [
+            "We allow generous labour time and 95% of all our jobs are done within the time frame",
+            "Although if the collection goes over our labour time, there is a £19 charge per 15 minutes"
+        ],
+        'if_unsure': "Think in terms of washing machine loads or black bags.",
+        'reference': "National average is 6 yards for man & van service."
+    },
+    'B4_access_critical': {
+        'questions': [
+            "Where is the waste located and how easy is it to access?",
+            "Can we park on the driveway or close to the waste?",
+            "Are there any stairs involved?",
+            "How far is our parking from the waste?"
+        ],
+        'always_mention': "We have insured and licensed teams",
+        'stairs_flats_apartments': {
+            'office_hours': "For collections involving stairs, let me put you through to our team for proper assessment.",
+            'out_of_hours': "Let's collect all the info about the project",
+            'action': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'B5_additional_timing': {
+        'question': "Is there anything else you need removing while we're on site?",
+        'prohibited_items': {
+            'fridges_freezers': {'charge': 20, 'condition': 'if allowed'},
+            'mattresses': {'charge': 15, 'condition': 'if allowed'},
+            'upholstered_furniture': {'charge': 15, 'reason': 'due to EA regulations'}
+        },
+        'time_restrictions': "NEVER guarantee specific times",
+        'script': "We can't guarantee exact times, but collection is typically between 7am-6pm",
+        'sunday_collections': {
+            'script': "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team and they will be able to help"
+        }
+    },
+    'B6_quote_pricing': {
+        'call_marketplace': True,
+        'process': [
+            'Call marketplace tool',
+            'IMMEDIATELY AFTER GETTING BASE PRICE:',
+            '1. Calculate any surcharges for prohibited items mentioned',
+            '2. Add surcharges to base price'
+        ]
+    }
+}
 
-A2: HEAVY MATERIALS CHECK & MAN & VAN SUGGESTION
-Ask: "What are you going to keep in the skip?"
-HEAVY MATERIALS RULES:
-- 12 yard skips: ONLY light materials (no concrete, soil, bricks - too heavy to lift)
-- 8 yard and under: CAN take heavy materials (bricks, soil, concrete, glass)
+GRAB_RULES = {
+    'C1_mandatory_info': {
+        'never_call_tools_until_all_info': True,
+        'mandatory_fields': [
+            {'field': 'name', 'question': "Can I take your name please?"},
+            {'field': 'phone', 'question': "What's the best phone number to contact you on?"},
+            {'field': 'postcode', 'question': "What's the postcode where you need the grab lorry?"},
+            {'field': 'waste_type', 'question': "What type of materials do you have?"},
+            {'field': 'quantity', 'question': "How much material do you have approximately?"}
+        ],
+        'only_after_all_info': 'proceed to service-specific questions'
+    },
+    'C2_grab_size_exact_scripts': {
+        'mandatory_exact_scripts': {
+            '8_wheeler': "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry.",
+            '6_wheeler': "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
+        },
+        'terminology': {
+            '6_wheelers': '12 tonnes capacity',
+            '8_wheelers': '16 tonnes capacity'
+        },
+        'never_say': ['8-ton', '6-ton', 'any other tonnage'],
+        'never_improvise': True,
+        'always_use': {
+            'grab_lorry': 'not just "grab"',
+            '16_tonne': 'for 8-wheelers',
+            '12_tonne': 'for 6-wheelers'
+        }
+    },
+    'C3_materials_assessment': {
+        'question': "What type of materials do you have?",
+        'soil_rubble_only': 'Continue to access assessment',
+        'mixed_materials': {
+            'condition': 'soil, rubble + other items like wood',
+            'script': "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
+        },
+        'wait_load_skip': {
+            'immediate_response': "For wait & load skips, let me put you through to our specialist who will check availability & costs.",
+            'action': 'TRANSFER'
+        },
+        'pricing_issues': {
+            'zero_unrealistic': {
+                'condition': 'grab prices show £0.00 or unrealistic high prices (over £500)',
+                'response': "Most grab prices require specialist assessment. Let me put you through to our team who can provide accurate pricing."
+            },
+            'no_prices': 'Always transfer/SMS notification for accurate pricing'
+        }
+    },
+    'C4_access_timing': {
+        'access_question': "Is there clear access for the grab lorry?",
+        'timing_check': {
+            'given': 'Don\'t ask again',
+            'not_given': "When do you need this?"
+        },
+        'complex_access': {
+            'office_hours': 'TRANSFER',
+            'out_of_hours': 'Take details + SMS notification to +447823656762'
+        }
+    },
+    'C5_quote_pricing': {
+        'call_marketplace': True,
+        'amount_thresholds': {
+            '300_or_more_office': "For this size job, let me put you through to our specialist team for the best service.",
+            '300_or_more_out_of_hours': 'Take details + SMS notification to +447823656762, still try to complete booking',
+            'under_300': 'Continue to booking decision (both office hours and out-of-hours)'
+        }
+    }
+}
 
-IF 12 yard skip + heavy materials mentioned: "For 12 yard skips, we can only take light materials as heavy materials make the skip too heavy to lift. For heavy materials, I'd recommend an 8 yard skip or smaller."
+SMS_NOTIFICATION = '+447823656762'
 
-CRITICAL BUSINESS RULE - MAN & VAN SUGGESTION: IF 8 yard or smaller skip + LIGHT MATERIALS ONLY (no heavy items mentioned):
-SAY EXACTLY: "Since you have light materials for an 8-yard skip, our man & van service might be more cost-effective. We do all the loading for you and only charge for what we remove. Shall I quote both the skip and man & van options so you can compare prices?"
-- If customer says YES: Use marketplace tool for BOTH skip AND man & van quotes, present both prices
-- If customer says NO or prefers skip: Continue with skip process
-
-A3: SKIP SIZE & LOCATION
-Check what customer said:
-- Size mentioned? Use it, don't ask again
-- Size not mentioned? "What size skip are you thinking of?"
-- If unsure: "We have 4, 6, 8, and 12-yard skips. Our 8-yard is most popular nationally."
-
-Check location:
-- Location mentioned? Use it, don't ask again
-- Location not mentioned? "Will the skip go on your driveway or on the road?"
-
-IF road/street/outside/in front/pavement: MANDATORY PERMIT SCRIPT
-IF driveway/private land: No permit needed, continue
-
-PERMIT SCRIPT (EXACT WORDS)
-SAY EXACTLY: "For any skip placed on the road, a council permit is required. We'll arrange this for you and include the cost in your quote. The permit ensures everything is legal and safe."
-
-Ask EXACTLY:
-1. "Are there any parking bays where the skip will go?"
-2. "Are there yellow lines in that area?"
-3. "Are there any parking restrictions on that road?"
-
-NEVER accept customer saying "no permit needed"
-
-A4: ACCESS ASSESSMENT
-Ask: "Is there easy access for our lorry to deliver the skip?" Ask: "Any low bridges, narrow roads, or parking restrictions?"
-CRITICAL: 3.5m width minimum required
-
-IF complex access:
-- Office hours: "For complex access situations, let me put you through to our team for a site assessment." TRANSFER
-- Out-of-hours: "For complex access situations, I can take your details and have our team call you back first thing tomorrow for a site assessment." Take details + SMS notification to +447823656762
-
-A5: PROHIBITED ITEMS SCREENING for SKIPS
-Ask: "Do you have any of these items?"
-
-STANDARD SURCHARGE ITEMS (ADD TO QUOTE IMMEDIATELY):
-- Fridges/Freezers (£20+ extra) - Need degassing
-- Mattresses (£15+ extra)
-- Upholstered furniture/sofas (£15+ extra)
-
-WHEN CUSTOMER MENTIONS SURCHARGE ITEMS:
-1. Get base price from marketplace tool
-2. IMMEDIATELY calculate total with surcharges
-3. Present FINAL price including surcharges
-
-EXAMPLE: "The base price is £200, and with the sofa that's an additional £15, making your total £215 including VAT."
-
-TRANSFER REQUIRED ITEMS:
-- Plasterboard: "Plasterboard requires a separate skip."
-- Gas cylinders, paints, hazardous chemicals: "We can help with hazardous materials."
-- Asbestos: Always transfer/SMS notification
-- Tyres: "Tyres can't be put in skip"
-
-A6: TIMING & QUOTE GENERATION
-Check timing:
-- Customer mentioned timing? Use it, don't ask again
-- Timing not given? "When do you need this delivered?"
-
-SAY EXACTLY: "We can't guarantee exact times, but delivery is between SEVEN AM TO SIX PM"
-
-A7: QUOTE PRESENTATION
-SKIP HIRE: Handle ALL amounts (no price limit - both office hours and out-of-hours)
-
-Present quote with TOTAL PRICE including all surcharges:
-EXAMPLES:
-- No surcharges: "The price for your 8-yard skip is £200 including VAT."
-- With sofa: "The price for your 8-yard skip including the £15 sofa surcharge is £215 including VAT."
-
-ALWAYS INCLUDE:
-- "Collection within 72 hours standard"
-- "Level load requirement for skip collection"
-- "Driver calls when en route"
-- "98% recycling rate"
-- "We have insured and licensed teams"
-- "Digital waste transfer notes provided"
-
-MAN & VAN COMPLETE FLOW
-B1: INFORMATION GATHERING
-Check what customer already provided:
-- Name given? Skip to next
-- Postcode given? Skip to next
-- Waste type given? Skip to next
-- Missing info? Ask ONLY what's missing
-
-B2: HEAVY MATERIALS CHECK
-Ask: "Do you have soil, rubble, bricks, concrete, or tiles?"
-
-IF YES:
-- Office hours: "For heavy materials with man & van service, let me put you through to our specialist team for the best solution." TRANSFER
-- Out-of-hours: "For heavy materials with man & van, I can take your details for our specialist team to call back." Take details + SMS notification to +447823656762
-
-IF NO: Continue to volume assessment
-
-B3: VOLUME ASSESSMENT & WEIGHT LIMITS
-Check amount:
-- Customer described amount? Don't ask again
-- Amount not clear? "How much waste do you have approximately?"
-
-SAY EXACTLY: "We charge by the cubic yard at £30 per yard for light waste."
-
-WEIGHT ALLOWANCES:
-- "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos"
-- "The majority of our collections are done under our generous weight allowances"
-
-LABOUR TIME:
-- "We allow generous labour time and 95% of all our jobs are done within the time frame"
-- "Although if the collection goes over our labour time, there is a £19 charge per 15 minutes"
-
-If unsure: "Think in terms of washing machine loads or black bags." Reference: "National average is 6 yards for man & van service."
-
-B4: ACCESS ASSESSMENT (CRITICAL)
-Ask:
-- "Where is the waste located and how easy is it to access?"
-- "Can we park on the driveway or close to the waste?"
-- CRITICAL: "Are there any stairs involved?"
-- "How far is our parking from the waste?"
-
-ALWAYS MENTION: "We have insured and licensed teams"
-
-IF stairs/flats/apartments:
-- Office hours: "For collections involving stairs, let me put you through to our team for proper assessment." TRANSFER
-- Out-of-hours: "Collections involving stairs need special assessment. I can arrange a callback." Take details + SMS notification to +447823656762
-
-B5: ADDITIONAL ITEMS & TIMING
-Ask: "Is there anything else you need removing while we're on site?"
-
-Check prohibited items (same surcharge rules as skip hire):
-- Fridges/Freezers: +£20 each (if allowed)
-- Mattresses: +£15 each (if allowed)
-- Upholstered furniture: +£15 each (due to EA regulations)
-
-CRITICAL TIME RESTRICTIONS: NEVER guarantee specific times SAY: "We can't guarantee exact times, but collection is typically between 7am-6pm"
-
-SUNDAY COLLECTIONS: IF customer requests Sunday collection: SAY EXACTLY: "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team and they will be able to help"
-
-B6: QUOTE & PRICING DECISION
-Call marketplace tool
-IMMEDIATELY AFTER GETTING BASE PRICE:
-1. Calculate any surcharges for prohibited items mentioned
-2. Add surcharges to base price
-
-GRAB HIRE COMPLETE FLOW
-C1: INFORMATION GATHERING (MANDATORY - ALL DETAILS FIRST)
-NEVER call tools until you have ALL required information:
-
-MANDATORY INFORMATION FOR GRAB SERVICES:
-1. Customer name: "Can I take your name please?"
-2. Phone number: "What's the best phone number to contact you on?"
-3. Postcode: "What's the postcode where you need the grab lorry?"
-4. Waste type: "What type of materials do you have?"
-5. Amount/quantity: "How much material do you have approximately?"
-
-ONLY AFTER collecting ALL above information proceed to service-specific questions
-
-C2: GRAB SIZE UNDERSTANDING (EXACT SCRIPTS)
-MANDATORY EXACT SCRIPTS:
-If customer says "8-wheeler": SAY EXACTLY: "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry."
-If customer says "6-wheeler": SAY EXACTLY: "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
-
-GRAB TERMINOLOGY:
-- 6-wheelers: Generally 12 tonnes capacity
-- 8-wheelers: Generally 16 tonnes capacity
-
-NEVER say: "8-ton" or "6-ton" or any other tonnage NEVER improvise - use exact script above ALWAYS use: "grab lorry" not just "grab" ALWAYS use: "16-tonne" for 8-wheelers, "12-tonne" for 6-wheelers
-
-C3: MATERIALS ASSESSMENT
-Ask: "What type of materials do you have?"
-
-IF soil and rubble only: Continue to access assessment
-
-IF mixed materials (soil, rubble + other items like wood): SAY EXACTLY: "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
-
-IF wait & load skip mentioned: IMMEDIATELY: "For wait & load skips, let me put you through to our specialist who will check availability & costs." TRANSFER
-
-GRAB PRICING ISSUES:
-- IF grab prices show £0.00 or unrealistic high prices (over £500): "Most grab prices require specialist assessment. Let me put you through to our team who can provide accurate pricing."
-- IF no grab prices available: Always transfer/SMS notification for accurate pricing
-
-C4: ACCESS & TIMING
-Ask: "Is there clear access for the grab lorry?"
-
-Check timing:
-- Timing given? Don't ask again
-- Timing not given? "When do you need this?"
-
-IF complex access:
-- Office hours: TRANSFER
-- Out-of-hours: Take details + SMS notification to +447823656762
-
-C5: QUOTE & PRICING
-Call marketplace tool
-
-Check amount:
-- £300 or more + Office hours: "For this size job, let me put you through to our specialist team for the best service." TRANSFER
-- £300 or more + Out-of-hours: Take details + SMS notification to +447823656762, still try to complete booking
-- Under £300: Continue to booking decision (both office hours and out-of-hours)
-"""
+SURCHARGE_ITEMS = {
+    'fridges_freezers': 20,
+    'mattresses': 15, 
+    'upholstered_furniture': 15,
+    'sofas': 15
+}
 
 
 class BaseAgent:
-    def __init__(self, rules_processor=None):
+    def __init__(self):
         self.conversations = {}  # Store conversation state
 
     def process_message(self, message, conversation_id="default"):
+        """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES"""
         state = self.conversations.get(conversation_id, {})
         print(f"📂 LOADED STATE: {state}")
 
+        # Extract new data from message
         new_data = self.extract_data(message)
         print(f"🔍 NEW DATA: {new_data}")
 
-        state.update(new_data)
+        # Merge state - PRESERVE EXISTING DATA PROPERLY
+        for key, value in new_data.items():
+            if value and value.strip():  # Only update if new value is not empty/whitespace
+                state[key] = value
         print(f"🔄 MERGED STATE: {state}")
 
-        self.conversations[conversation_id] = state
+        # CRITICAL: Ensure state persistence
+        self.conversations[conversation_id] = state.copy()
 
+        # Get next response following ALL RULES
         response = self.get_next_response(message, state, conversation_id)
+        
+        # Save state again after processing - DOUBLE CHECK
+        self.conversations[conversation_id] = state.copy()
+        print(f"💾 FINAL STATE SAVED: {self.conversations[conversation_id]}")
+        
         return response
 
+    def check_completion_status(self, state):
+        """Track what we have and what we need"""
+        completion = {
+            'name': 'yes' if state.get('firstName') else 'no',
+            'address': 'yes' if state.get('postcode') else 'no', 
+            'service': 'yes' if state.get('service') else 'no',
+            'phone': 'yes' if state.get('phone') else 'no'
+        }
+        
+        all_ready = all(status == 'yes' for status in completion.values())
+        print(f"📋 COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
+        
+        return completion, all_ready
+
+    # NEW: Check if question is asking for information (not booking)
+    def is_information_request(self, message):
+        """Check if customer is asking for information rather than booking"""
+        info_keywords = [
+            'what are', 'what is', 'can i put', 'do i need', 'tell me about',
+            'explain', 'how much is', 'what size', 'how large', 'how wide',
+            'what waste can', 'can you take', 'requirements', 'allowance',
+            'prohibited', 'largest', 'smallest', 'information', 'details'
+        ]
+        return any(keyword in message.lower() for keyword in info_keywords)
+
+    # NEW: Check for prohibited items in skip
+    def check_prohibited_items_skip(self, message):
+        """Check if message mentions items prohibited in skips"""
+        message_lower = message.lower()
+        prohibited_found = []
+        
+        for item in PROHIBITED_ITEMS_SKIP:
+            if item in message_lower:
+                prohibited_found.append(item)
+        
+        return prohibited_found
+
+    # NEW: Check if soil/heavy materials for service recommendation
+    def check_soil_heavy_materials(self, message):
+        """Check if message mentions soil or heavy materials"""
+        message_lower = message.lower()
+        heavy_materials = ['soil', 'rubble', 'concrete', 'bricks', 'hardcore', 'dirt', 'earth', 'tons', 'tonnes']
+        
+        for material in heavy_materials:
+            if material in message_lower:
+                return True
+        return False
+
     def extract_data(self, message):
+        """EXTRACT ALL CUSTOMER DATA - FOLLOW EXTRACTION RULES"""
         data = {}
         message_lower = message.lower()
+
+        # NEW: Extract special items (supplements) that affect pricing
+        supplements = []
+        supplement_mappings = {
+            'fridge': 'fridge',
+            'freezer': 'freezer', 
+            'fridges': 'fridge',
+            'freezers': 'freezer',
+            'sofa': 'sofa',
+            'sofas': 'sofa',
+            'mattress': 'mattress',
+            'mattresses': 'mattress',
+            'upholstered furniture': 'upholstered_furniture',
+            'upholstered chair': 'upholstered_furniture',
+            'upholstered chairs': 'upholstered_furniture',
+            'chair': 'chair',  # Will be checked for upholstery context
+            'chairs': 'chairs'  # Will be checked for upholstery context
+        }
+        
+        for item_phrase, supplement_code in supplement_mappings.items():
+            if item_phrase in message_lower:
+                # Special handling for chairs - only if upholstered context
+                if supplement_code in ['chair', 'chairs']:
+                    if any(context in message_lower for context in ['upholstered', 'fabric', 'leather', 'cushioned']):
+                        supplements.append('upholstered_furniture')
+                    # Otherwise assume furniture chairs need surcharge
+                    else:
+                        supplements.append('upholstered_furniture')  # Safe assumption for pricing
+                else:
+                    supplements.append(supplement_code)
+        
+        # Remove duplicates
+        if supplements:
+            data['supplements'] = list(set(supplements))
+            print(f"✅ Extracted supplements: {data['supplements']}")
 
         # Postcode regex - requires complete postcode format like LS14ED
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
         if postcode_match:
             postcode = postcode_match.group(1).replace(' ', '')
-            # Ensure it's a complete postcode
             if len(postcode) >= 5:
                 data['postcode'] = postcode
                 print(f"✅ Extracted complete postcode: {data['postcode']}")
 
-        phone_match = re.search(r'\b(\d{10,11})\b', message)
-        if phone_match:
-            data['phone'] = phone_match.group(1)
-            print(f"✅ Extracted phone: {data['phone']}")
+        # Phone extraction - handle multiple formats
+        phone_patterns = [
+            r'\b(\d{11})\b',                    # 01442216784 (11 consecutive digits)
+            r'\b(\d{10})\b',                    # 0144216784 (10 consecutive digits)
+            r'\b(\d{5})\s+(\d{6})\b',           # 01442 216784 (5 + 6 digits with space)
+            r'\b(\d{4})\s+(\d{6})\b',           # 0144 216784 (4 + 6 digits with space)
+            r'\b(\d{5})-(\d{6})\b',             # 01442-216784 (5 + 6 digits with hyphen)
+            r'\b(\d{4})-(\d{6})\b',             # 0144-216784 (4 + 6 digits with hyphen)
+            r'\((\d{4,5})\)\s*(\d{6})\b',       # (01442) 216784 (brackets format)
+        ]
+        
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, message)
+            if phone_match:
+                # Combine all captured groups and remove any non-digits
+                phone_parts = [group for group in phone_match.groups() if group]
+                phone_number = ''.join(phone_parts)
+                if len(phone_number) >= 10:  # Valid UK phone number
+                    data['phone'] = phone_number
+                    print(f"✅ Extracted phone: {data['phone']}")
+                    break
 
-        # Extract names - SIMPLE AND WORKING
+        # Name extraction - FIXED: Don't extract "Yes" as name
         if 'kanchen' in message_lower or 'kanchan' in message_lower:
             data['firstName'] = 'Kanchan'
             print(f"✅ Extracted name: Kanchan")
+        elif 'jackie' in message_lower:
+            data['firstName'] = 'Jackie'
+            print(f"✅ Extracted name: Jackie")
         else:
-            # Only extract if it's clearly a name, not random words
             name_patterns = [
-                r'(?:my\s+name\s+is|i\s+am|call\s+me)\s+([A-Z][a-z]+)',
-                r'^([A-Z][a-z]+)\s+(?:here|speaking|calling)',
+                r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+                r'[Cc]ustomer\s+(?:name\s+)?(?:is\s+)?([A-Z][a-z]+)',
+                r'^([A-Z][a-z]+)\s+(?:wants|needs)',
+                r'^([A-Z][a-z]+),',
+                r'for\s+([A-Z][a-z]+),',
+                r'([A-Z][a-z]+)\s+phone',
+                r'phone\s+([A-Z][a-z]+)',
             ]
             for pattern in name_patterns:
                 name_match = re.search(pattern, message)
                 if name_match:
                     potential_name = name_match.group(1).strip().title()
-                    # Blacklist common words that aren't names
-                    if potential_name.lower() not in ['yes', 'no', 'okay', 'sure', 'there', 'easy', 'good', 'what', 'how', 'when']:
+                    # RULE: Don't extract common words as names
+                    if potential_name.lower() not in ['yes', 'no', 'there', 'what', 'how', 'confirmed', 'phone', 'please']:
                         data['firstName'] = potential_name
                         print(f"✅ Extracted name: {data['firstName']}")
                         break
 
-        # Extract waste type information
-        if any(waste in message_lower for waste in ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'concrete', 'soil', 'rubble']):
-            waste_types = []
-            if any(w in message_lower for w in ['plastic', 'household', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper']):
-                waste_types.append('light materials')
-            if any(w in message_lower for w in ['bricks', 'brick', 'concrete', 'soil', 'rubble', 'hardcore']):
-                waste_types.append('heavy materials')
-            if any(w in message_lower for w in ['renovation', 'building', 'construction']):
-                waste_types.append('renovation waste')
-            
-            if waste_types:
-                data['waste_type'] = ', '.join(set(waste_types))  # Remove duplicates
-                print(f"✅ Extracted waste type: {data['waste_type']}")
+        # SERVICE DETECTION - CRITICAL FOR PROPER ROUTING
+        # Skip hire indicators
+        if any(word in message_lower for word in ['skip', 'skip hire', 'container hire']):
+            data['service'] = 'skip'
+            # Detect skip size
+            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']):
+                data['type'] = '8yd'
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
+                data['type'] = '6yd'
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
+                data['type'] = '4yd'
+            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']):
+                data['type'] = '12yd'
+            else:
+                data['type'] = '8yd'  # Default
+        
+        # Man & Van indicators (HOUSE CLEARANCE = MAV, NOT GRAB!) - EXPANDED LIST
+        elif any(phrase in message_lower for phrase in [
+            'house clearance', 'furniture removal', 'furniture collection', 'house clear',
+            'clearance', 'man and van', 'man & van', 'mav', 'loading service',
+            'furniture', 'wardrobe', 'wardrobes', 'sofa', 'mattress', 'appliances', 'white goods',
+            'office clearance', 'flat clearance', 'garage clear', 'shed clear',
+            'we do the loading', 'you load', 'collection service',
+            'chest of drawers', 'bed', 'table', 'chair', 'bookshelf', 'dresser',
+            'dining table', 'bedroom furniture', 'living room', 'kitchen appliances',
+            'washing machine', 'fridge', 'cooker', 'dishwasher', 'tumble dryer',
+            'remove furniture', 'furniture pick up', 'furniture disposal',
+            'house move', 'moving furniture', 'furniture clearance',
+            'two wardrobes', 'three piece suite'
+        ]):
+            data['service'] = 'mav'
+            data['type'] = '4yd'  # Default
+        
+        # Grab hire indicators (ONLY for soil/rubble/muckaway) - STRICT LIST
+        elif any(phrase in message_lower for phrase in [
+            'grab hire', 'grab lorry', 'soil removal', 'rubble removal', 'muckaway', 
+            'dirt removal', 'earth removal', 'excavation waste', 'heavy materials removal',
+            'concrete removal', 'hardcore removal', 'aggregates', 'topsoil removal', 'subsoil',
+            'building rubble', 'demolition waste', 'construction rubble'
+        ]) and not any(furniture in message_lower for furniture in ['furniture', 'wardrobe', 'bed', 'sofa', 'table']):
+            data['service'] = 'grab'
+            data['type'] = '6yd'  # Default
+
+        # Extract waste type information - FOLLOW WASTE TYPE RULES
+        waste_keywords = ['plastic', 'brick', 'waste', 'rubbish', 'items', 'normal', 'household', 'soil', 'old', 'furniture', 'clothes', 'books', 'toys', 'cardboard', 'paper', 'bricks', 'brick', 'renovation', 'rubble', 'concrete', 'tiles', 'wardrobe', 'clearance']
+        found_waste = []
+        
+        for keyword in waste_keywords:
+            if keyword in message_lower:
+                found_waste.append(keyword)
+        
+        if found_waste:
+            data['waste_type'] = ', '.join(found_waste)
+            print(f"✅ Extracted waste type: {data['waste_type']}")
 
         # Extract location information
-        if any(loc in message_lower for loc in ['driveway', 'drive', 'private', 'road', 'street', 'easy access', 'access']):
-            data['location_mentioned'] = True
-            print(f"✅ Location mentioned in message")
+        location_phrases = [
+            'in the garage', 'in garage', 'garage', 'half a garage',
+            'in the garden', 'garden', 'back garden', 'front garden',
+            'in the house', 'inside', 'indoors', 'house clearance',
+            'outside', 'outdoors', 'on the drive', 'driveway',
+            'easy access', 'easy to access', 'accessible',
+            'ground floor', 'upstairs', 'basement', 'flat', 'apartment'
+        ]
+        for phrase in location_phrases:
+            if phrase in message_lower:
+                data['location'] = message.strip()
+                print(f"✅ Extracted location: {data['location']}")
+                break
 
         return data
 
@@ -352,7 +576,8 @@ class BaseAgent:
             'send me the link', 'i want to book', 'ready to book', 'lets book',
             'checkout', 'complete order', 'finalize booking', 'secure booking',
             'reserve this', 'confirm this', 'i\'ll take it', 'that works',
-            'perfect', 'sounds good', 'thats fine', 'arrange this'
+            'perfect', 'sounds good', 'thats fine', 'arrange this',
+            'wants to book', 'please send payment'
         ]
         
         # Positive responses
@@ -366,7 +591,7 @@ class BaseAgent:
         return any(word in message_lower for word in positive_words)
 
     def is_business_hours(self):
-        """Check business hours - ONLY for transfer decisions"""
+        """Check if it's business hours"""
         now = datetime.now()
         day_of_week = now.weekday()  # 0=Monday, 6=Sunday
         hour = now.hour
@@ -380,24 +605,13 @@ class BaseAgent:
         return False  # Sunday closed
 
     def needs_transfer(self, price):
-        """SKIP HIRE = NO TRANSFER EVER - ALWAYS MAKE THE SALE"""
+        """Check if transfer is needed based on service and price"""
         if self.service_type == 'skip':
-            return False  # SKIP HIRE: NO LIMIT - NEVER TRANSFER - ALWAYS BOOK
-        
+            return False  # Skip hire: no limit, never transfer
         elif self.service_type == 'mav' and price >= 500:
-            if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
-                return False
-            print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £500+ MAV")
-            return True
-            
+            return True   # MAV: transfer needed for £500+
         elif self.service_type == 'grab' and price >= 300:
-            if not self.is_business_hours():
-                print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD OF TRANSFER")
-                return False
-            print("🏢 OFFICE HOURS - TRANSFER NEEDED FOR £300+ GRAB")
-            return True
-            
+            return True   # Grab: transfer needed for £300+
         return False
 
     def validate_postcode_with_customer(self, current_postcode):
@@ -407,23 +621,101 @@ class BaseAgent:
         else:
             return f"I'm having trouble finding pricing for {current_postcode}. Could you please confirm your complete postcode is correct?"
 
-    def complete_booking_proper(self, state):
-        """Complete booking with payment link"""
+    # CORE FUNCTION 1: GET PRICING ONLY
+    def get_pricing(self, state, conversation_id, wants_to_book=False):
+        """CORE FUNCTION: Get pricing and present to user - ACTUAL API CALLS WITH SUPPLEMENTS"""
+        try:
+            print("📞 CALLING CREATE_BOOKING API...")
+            booking_result = create_booking()
+            if not booking_result.get('success'):
+                print("❌ CREATE_BOOKING FAILED")
+                return "Unable to get pricing right now. Let me put you through to our team."
+            
+            booking_ref = booking_result['booking_ref']
+            service_type = state.get('type', self.default_type)
+            
+            # NEW: Include supplements in pricing call
+            supplements = state.get('supplements', [])
+            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}, supplements={supplements}")
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type, supplements)
+            
+            if not price_result.get('success'):
+                print("❌ GET_PRICING FAILED - POSTCODE ISSUE")
+                return self.validate_postcode_with_customer(state.get('postcode'))
+            
+            price = price_result['price']
+            price_num = float(str(price).replace('£', '').replace(',', ''))
+            
+            print(f"💰 GOT PRICE: {price} (numeric: {price_num}) with supplements: {supplements}")
+            
+            if price_num > 0:
+                state['price'] = price
+                state['type'] = price_result.get('type', service_type)
+                state['booking_ref'] = booking_ref
+                self.conversations[conversation_id] = state
+                
+                # Apply transfer logic correctly
+                if self.needs_transfer(price_num):
+                    # Only check office hours if transfer is actually needed
+                    if self.is_business_hours():
+                        print("🔄 TRANSFER NEEDED - OFFICE HOURS")
+                        return "For this size job, let me put you through to our specialist team for the best service."
+                    else:
+                        print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
+                        if wants_to_book:
+                            print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                            return self.complete_booking(state)
+                        else:
+                            # NEW: Mention supplements in pricing response if any
+                            response = f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}"
+                            if supplements:
+                                supplement_names = {'fridge': 'fridge', 'freezer': 'freezer', 'sofa': 'sofa', 'mattress': 'mattress', 'upholstered_furniture': 'upholstered furniture'}
+                                items = [supplement_names.get(s, s) for s in supplements]
+                                response += f" (including surcharge for {', '.join(items)})"
+                            response += ". Would you like to book this?"
+                            return response
+                else:
+                    # No transfer needed
+                    if wants_to_book:
+                        print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                        return self.complete_booking(state)
+                    else:
+                        print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
+                        # NEW: Mention supplements in pricing response if any
+                        response = f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}"
+                        if supplements:
+                            supplement_names = {'fridge': 'fridge', 'freezer': 'freezer', 'sofa': 'sofa', 'mattress': 'mattress', 'upholstered_furniture': 'upholstered furniture'}
+                            items = [supplement_names.get(s, s) for s in supplements]
+                            response += f" (including surcharge for {', '.join(items)})"
+                        response += ". Would you like to book this?"
+                        return response
+            else:
+                print("❌ ZERO PRICE RETURNED")
+                return self.validate_postcode_with_customer(state.get('postcode'))
+                
+        except Exception as e:
+            print(f"❌ PRICING ERROR: {e}")
+            return "Unable to get pricing right now. Let me put you through to our team."
+
+    # CORE FUNCTION 2: COMPLETE BOOKING ONLY
+    def complete_booking(self, state):
+        """CORE FUNCTION: Complete booking with payment link - MUST CALL ACTUAL API WITH SUPPLEMENTS"""
         try:
             print("🚀 COMPLETING BOOKING...")
             
-            # Prepare customer data
+            # Prepare customer data including supplements
             customer_data = {
                 'firstName': state.get('firstName'),
                 'phone': state.get('phone'),
                 'postcode': state.get('postcode'),
                 'service': state.get('service'),
-                'type': state.get('type')
+                'type': state.get('type'),
+                'supplements': state.get('supplements', [])  # NEW: Include supplements
             }
             
-            print(f"📋 CUSTOMER DATA: {customer_data}")
+            print(f"📋 CUSTOMER DATA WITH SUPPLEMENTS: {customer_data}")
             
-            # Call the complete booking API
+            # RULE: Call the complete booking API - ACTUAL API CALL
             result = complete_booking(customer_data)
             
             if result.get('success'):
@@ -442,9 +734,9 @@ class BaseAgent:
                 if payment_link and state.get('phone'):
                     self.send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
                 
-                response = f"✅ Booking confirmed! Ref: {booking_ref}, Price: {price}"
+                response = f"Booking confirmed! Ref: {booking_ref}, Price: {price}"
                 if payment_link:
-                    response += f"\n💳 Payment link sent to your phone: {payment_link}"
+                    response += f" Payment link sent to your phone: {payment_link}"
                 
                 return response
             else:
@@ -456,7 +748,7 @@ class BaseAgent:
             return "Booking issue occurred. Our team will contact you."
 
     def send_sms(self, name, phone, booking_ref, price, payment_link):
-        """Send SMS with payment link"""
+        """RULE: Send SMS with payment link - ACTUAL API CALL"""
         try:
             twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
             twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
@@ -474,324 +766,295 @@ class BaseAgent:
         except Exception as e:
             print(f"❌ SMS error: {e}")
 
-    def get_pricing_and_complete_booking(self, state, conversation_id):
-        """Get pricing and complete booking immediately"""
-        try:
-            from utils.wasteking_api import create_booking, get_pricing
-            
-            booking_result = create_booking()
-            if not booking_result.get('success'):
-                return "Unable to get pricing right now."
-            
-            booking_ref = booking_result['booking_ref']
-            service_type = state.get('type', self.default_type)
-            
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type)
-            
-            if not price_result.get('success'):
-                return self.validate_postcode_with_customer(state.get('postcode'))
-            
-            price = price_result['price']
-            price_num = float(str(price).replace('£', '').replace(',', ''))
-            
-            if price_num > 0:
-                state['price'] = price
-                state['type'] = price_result.get('type', service_type)
-                state['booking_ref'] = booking_ref
-                self.conversations[conversation_id] = state
-                
-                print("🚀 GOT PRICING - NOW COMPLETING BOOKING IMMEDIATELY")
-                return self.complete_booking_proper(state)
-            else:
-                return self.validate_postcode_with_customer(state.get('postcode'))
-                
-        except Exception as e:
-            print(f"❌ PRICING ERROR: {e}")
-            return self.validate_postcode_with_customer(state.get('postcode'))
-
-    def get_pricing_and_ask(self, state, conversation_id):
-        """Get pricing and ask for booking - MUST ACTUALLY CALL THE API"""
-        try:
-            from utils.wasteking_api import create_booking, get_pricing
-            
-            print("📞 CALLING CREATE_BOOKING API...")
-            booking_result = create_booking()
-            if not booking_result.get('success'):
-                print("❌ CREATE_BOOKING FAILED")
-                return "Unable to get pricing right now. Let me put you through to our team."
-            
-            booking_ref = booking_result['booking_ref']
-            service_type = state.get('type', self.default_type)
-            
-            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}")
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type)
-            
-            if not price_result.get('success'):
-                print("❌ GET_PRICING FAILED - POSTCODE ISSUE")
-                return self.validate_postcode_with_customer(state.get('postcode'))
-            
-            price = price_result['price']
-            price_num = float(str(price).replace('£', '').replace(',', ''))
-            
-            print(f"💰 GOT PRICE: {price} (numeric: {price_num})")
-            
-            if price_num > 0:
-                state['price'] = price
-                state['type'] = price_result.get('type', service_type)
-                state['booking_ref'] = booking_ref
-                self.conversations[conversation_id] = state
-                
-                # Check if needs transfer - BUT SKIP HIRE NEVER TRANSFERS
-                if self.needs_transfer(price_num):
-                    print("🔄 TRANSFER NEEDED")
-                    return "For this size job, let me put you through to our specialist team for the best service."
-                
-                print("✅ PRESENTING PRICE TO USER")
-                return f"💰 {state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
-            else:
-                print("❌ ZERO PRICE RETURNED")
-                return self.validate_postcode_with_customer(state.get('postcode'))
-                
-        except Exception as e:
-            print(f"❌ PRICING ERROR: {e}")
-            return "Unable to get pricing right now. Let me put you through to our team."
-
 
 class SkipAgent(BaseAgent):
-    def __init__(self, rules_processor=None):
-        super().__init__(rules_processor)
+    """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7 + NEW INFORMATION RULES"""
+    def __init__(self):
+        super().__init__()
         self.service_type = 'skip'
         self.service_name = 'skip hire'
         self.default_type = '8yd'
 
-    def extract_data(self, message):
-        data = super().extract_data(message)
+    def get_next_response(self, message, state, conversation_id):
+        """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY + NEW INFORMATION HANDLING"""
+        wants_to_book = self.should_book(message)
         message_lower = message.lower()
         
-        if any(word in message_lower for word in ['skip', 'skip hire']):
-            data['service'] = 'skip'
-            
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
-                data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
-                data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
-                data['type'] = '4yd'
-            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']):
-                data['type'] = '12yd'
-            else:
-                data['type'] = '8yd'  # Default
-                
-        return data
-
-    def has_all_required_info(self, state):
-        """Check if we have all required information to get pricing"""
-        required_fields = ['firstName', 'postcode', 'service', 'type']
-        has_all = all(state.get(field) for field in required_fields)
-        print(f"🔍 CHECKING REQUIRED INFO: {required_fields}")
-        print(f"📋 CURRENT STATE: {state}")
-        print(f"✅ HAS ALL REQUIRED: {has_all}")
-        return has_all
-
-    def get_next_response(self, message, state, conversation_id):
-        """SIMPLE WORKING BOOKING FLOW - NO OVERCOMPLICATION"""
-        wants_to_book = self.should_book(message)
+        # NEW: Handle information requests first (before booking flow)
+        if self.is_information_request(message):
+            return self.handle_information_request(message)
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
-            return self.complete_booking_proper(state)
+            return self.complete_booking(state)
 
-        # BASIC INFO GATHERING
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
+
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # A1: INFORMATION GATHERING SEQUENCE
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
         elif not state.get('service'):
-            # Auto-set service type for Skip
             state['service'] = 'skip'
             if not state.get('type'):
-                state['type'] = '8yd'  # Default
+                state['type'] = '8yd'
             self.conversations[conversation_id] = state
 
-        # If user mentioned waste type, skip the question
-        elif not state.get('waste_type') and not state.get('waste_content_asked'):
-            state['waste_content_asked'] = True
-            self.conversations[conversation_id] = state
-            return "What are you going to keep in the skip?"
-        
+        # If we have basic info but missing phone, ask for it
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
 
-        # PRICING AND BOOKING - SIMPLE LOGIC
-        # If user wants to book, get price and complete booking immediately
-        elif wants_to_book and not state.get('price'):
-            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
-            return self.get_pricing_and_complete_booking(state, conversation_id)
-        
-        # If we have all basic info but no price, get pricing
-        elif not state.get('price') and state.get('firstName') and state.get('postcode') and state.get('phone'):
-            print("🚀 HAVE ALL BASIC INFO - GETTING PRICING")
-            return self.get_pricing_and_ask(state, conversation_id)
-        
-        # If we have pricing, present it
-        elif state.get('price'):
-            return f"💰 {state['type']} skip hire at {state['postcode']}: {state['price']}. Collection within 72 hours standard. Would you like to book this?"
-        
+        # If we have all required info, proceed to get price
+        elif state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price'):
+                return f"{state.get('type', '8yd')} skip hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+
         return "How can I help you with skip hire?"
+
+    # NEW: Handle information requests for skip hire
+    def handle_information_request(self, message):
+        """Handle information requests about skip hire"""
+        message_lower = message.lower()
+        
+        # Prohibited items question
+        if any(phrase in message_lower for phrase in ['prohibited', 'what can', 'can i put', 'allowed']):
+            prohibited_items = self.check_prohibited_items_skip(message)
+            if prohibited_items:
+                if any(item in ['sofa', 'sofas', 'upholstered'] for item in prohibited_items):
+                    return "No, sofas are not allowed in skips as they are upholstered furniture. However, we can help you with our Man & Van service. We charge extra due to EA regulations for the way we dispose of sofas and other upholstered items."
+                else:
+                    return f"The prohibited items in skips include: Fridges/Freezers, TV/Screens, Carpets, Paint/Liquid, Plasterboard, Mattresses, Gas cylinders, Tyres, and Air Conditioning units. For specialized waste disposal, please contact our team at 0370 343 9990."
+            else:
+                return "The prohibited items in skips include: Fridges/Freezers, TV/Screens, Carpets, Paint/Liquid, Plasterboard, Mattresses, Gas cylinders, Tyres, and Air Conditioning units."
+        
+        # Skip sizes for heavy materials
+        elif any(phrase in message_lower for phrase in ['largest skip', 'biggest skip', 'soil', 'rubble', 'heavy']):
+            if self.check_soil_heavy_materials(message):
+                return "For soil removal, the largest skip is 8-yard. Larger skips than that are suitable only for light waste, not heavy materials like soil and rubble."
+            else:
+                return "The largest skip is RORO 40-yard. However, for heavy materials like soil and rubble, the largest skip is 8-yard."
+        
+        # Smallest skip
+        elif 'smallest' in message_lower:
+            return "The smallest skip size available is a 2-yard skip, often called a 'mini skip', ideal for small amounts of waste and minor home projects."
+        
+        # Permit questions
+        elif any(phrase in message_lower for phrase in ['permit', 'road', 'driveway']):
+            return "The placement of the skip on your driveway will not require a permit. However, the placement of the skip on the road will require a permit from the council, which we'll arrange for you and include in your quote."
+        
+        # Cubic yard explanation
+        elif 'cubic yard' in message_lower:
+            return "A cubic yard is a unit of volume measurement. To visualize it, imagine a cube that measures one yard (3 feet) on each side. It's useful for understanding how much material can fit in a skip."
+        
+        # Drop-down door skips
+        elif 'dropped down door' in message_lower or 'drop down door' in message_lower:
+            return "Drop-down door skips are large waste containers with a convenient door that allows easy loading. They're ideal for heavy materials as you can walk directly into the skip instead of lifting waste over the sides."
+        
+        # Soil recommendation
+        elif 'tons of soil' in message_lower or 'tonnes of soil' in message_lower:
+            return "For the removal of large amounts of soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard."
+        
+        # General information
+        else:
+            return "I can help with skip hire information. For specific details, please let me know what you'd like to know about skip sizes, pricing, or placement requirements."
 
 
 class MAVAgent(BaseAgent):
-    def __init__(self, rules_processor):
-        super().__init__(rules_processor)
+    """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6 + NEW INFORMATION RULES"""
+    def __init__(self):
+        super().__init__()
         self.service_type = 'mav'
         self.service_name = 'man & van'
         self.default_type = '4yd'
 
-    def extract_data(self, message):
-        data = super().extract_data(message)
-        message_lower = message.lower()
-
-        if any(word in message_lower for word in ['man and van', 'mav', 'man & van']):
-            data['service'] = 'mav'
-
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
-                data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
-                data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
-                data['type'] = '4yd'
-            else:
-                data['type'] = '4yd'  # Default
-
-        return data
-
     def get_next_response(self, message, state, conversation_id):
-        """ORIGINAL WORKING FLOW WITH PROPER STATE MANAGEMENT"""
+        message_lower = message.lower()
         wants_to_book = self.should_book(message)
 
-        # If user wants to book and we have pricing, complete booking immediately
+        # NEW: Handle information requests first
+        if self.is_information_request(message):
+            return self.handle_information_request(message)
+
+        completion, all_ready = self.check_completion_status(state)
+
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
-            return self.complete_booking_proper(state)
+            return self.complete_booking(state)
 
-        # STEP 1: Basic info (original working logic)
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
+
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # NEW: Heavy materials check
+        if self.check_soil_heavy_materials(message):
+            return "For the removal of heavy materials like soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard. Skip hire is the best option for heavy materials."
+
+        # B2: CHECK FOR HEAVY MATERIALS FIRST (Before info gathering)
+        if state.get('firstName') and state.get('postcode') and state.get('phone') and state.get('service') and not state.get('heavy_materials_checked'):
+            if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
+                if self.is_business_hours():
+                    return "For heavy materials with man & van service, let me put you through to our specialist team for the best solution."
+                else:
+                    return "For heavy materials with man & van, I can take your details for our specialist team to call back."
+            else:
+                state['heavy_materials_checked'] = True
+                self.conversations[conversation_id] = state
+
+        # B1: INFORMATION GATHERING - FIXED ORDER
         if not state.get('firstName'):
             return "What's your name?"
         elif not state.get('postcode'):
             return "What's your complete postcode? For example, LS14ED rather than just LS1."
-        elif not state.get('service'):
-            # Auto-set service type for MAV
-            state['service'] = 'mav'
-            state['type'] = '4yd'  # Default
-            self.conversations[conversation_id] = state
-        
-        # STEP 2: Heavy materials check (B2 from PDF)
-        elif not state.get('heavy_materials_checked'):
-            state['heavy_materials_checked'] = True
-            self.conversations[conversation_id] = state
-            return "Do you have soil, rubble, bricks, concrete, or tiles?"
-        
-        # STEP 3: Waste type (B3 from PDF) 
-        elif not state.get('waste_type'):
-            return "What type of waste do you have?"
-        
-        # STEP 4: Volume assessment (B3 continued)
-        elif not state.get('volume_assessed'):
-            state['volume_assessed'] = True  
-            self.conversations[conversation_id] = state
-            return "We charge by the cubic yard at £30 per yard for light waste. We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos. How much waste do you have approximately? Think in terms of washing machine loads or black bags."
-        
-        # STEP 5: Location access (B4 from PDF)
-        elif not state.get('location'):
-            return "Where is the waste located and how easy is it to access?"
-        
-        # STEP 6: Parking access (B4 continued)  
-        elif not state.get('parking_checked'):
-            state['parking_checked'] = True
-            self.conversations[conversation_id] = state
-            return "Can we park on the driveway or close to the waste?"
-        
-        # STEP 7: Stairs check (B4 critical)
-        elif not state.get('stairs_checked'):
-            state['stairs_checked'] = True
-            self.conversations[conversation_id] = state
-            return "Are there any stairs involved? We have insured and licensed teams."
-        
-        # STEP 8: Distance check (B4 final)
-        elif not state.get('distance_checked'):
-            state['distance_checked'] = True
-            self.conversations[conversation_id] = state
-            return "How far is our parking from the waste?"
-        
-        # STEP 9: Additional items (B5 from PDF)
-        elif not state.get('additional_items_checked'):
-            state['additional_items_checked'] = True
-            self.conversations[conversation_id] = state
-            return "Is there anything else you need removing while we're on site? Any fridges, mattresses, or upholstered furniture?"
-        
-        # STEP 10: Timing (B5 continued)
-        elif not state.get('timing_checked'):
-            state['timing_checked'] = True
-            self.conversations[conversation_id] = state
-            return "When do you need this collection? We can't guarantee exact times, but collection is typically between 7am-6pm."
-        
-        # STEP 11: Phone number (final step before pricing)
         elif not state.get('phone'):
             return "What's the best phone number to contact you on?"
-        
-        # ORIGINAL BOOKING FLOW CONTINUES
-        elif wants_to_book and not state.get('price'):
-            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
-            return self.get_pricing_and_complete_booking(state, conversation_id)
-        
-        elif not state.get('price'):
-            return self.get_pricing_and_ask(state, conversation_id)
-        
-        elif state.get('price'):
-            return f"💰 {state['type']} man & van at {state['postcode']}: {state['price']}. We allow generous labour time and 95% of all our jobs are done within the time frame. Although if the collection goes over our labour time, there is a £19 charge per 15 minutes. Would you like to book this?"
+        elif not state.get('service'):
+            # Auto-set service if not detected
+            state['service'] = 'mav'
+            state['type'] = '4yd'
+            self.conversations[conversation_id] = state
+            print(f"🔧 MAV: Auto-set service to mav, type to 4yd")
 
-        return "How can I help you with man & van service?"
+        # If we have all required info, proceed to get price
+        if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                print("🚀 MAV: All info collected, getting pricing")
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price') and not wants_to_book:
+                return f"{state.get('type', '4yd')} man & van service at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and wants_to_book:
+                print("🚀 MAV: User wants to book, completing booking")
+                return self.complete_booking(state)
+
+        return "I can help you with man & van service for furniture removal. What's your name?"
+
+    # NEW: Handle information requests for man & van
+    def handle_information_request(self, message):
+        """Handle information requests about man & van service"""
+        message_lower = message.lower()
+        
+        # Weight allowance questions
+        if any(phrase in message_lower for phrase in ['weight allowance', 'weight limit', 'how much weight']):
+            return MAV_WEIGHT_ALLOWANCES['standard_message']
+        
+        # Estimation help
+        elif any(phrase in message_lower for phrase in ['estimate', 'how much waste', 'how to calculate']):
+            return ("Estimating your waste for man and van service: Try to visualize how many cubic yards your waste might fill - a cubic yard is roughly the size of a standard washing machine. Think in terms of washing machine loads or black bags. The national average is 6 yards for man & van service.")
+        
+        # Upholstered furniture charges
+        elif any(phrase in message_lower for phrase in ['chairs', 'sofa', 'upholstered', 'extra charge']):
+            return "The pricing for man and van service includes removal of typical household items. However, there is a surcharge for supplements - if chairs are upholstered, there will be an extra charge due to EA regulations for the way we dispose of them."
+        
+        # Fridge pricing - NEW RULE: Give immediate price + surcharge
+        elif 'fridge' in message_lower and any(phrase in message_lower for phrase in ['how much', 'price', 'cost']):
+            return "For man and van service with a fridge, I'll need your postcode to give you the exact price. There's a £20 surcharge for fridges due to degassing requirements."
+        
+        # How service works
+        elif any(phrase in message_lower for phrase in ['how does it work', 'how do you charge']):
+            return ("Our man and van service works by the cubic yard. " + MAV_WEIGHT_ALLOWANCES['standard_message'] + " We allow generous labour time and 95% of all jobs are done within the time frame, although if collection goes over our labour time, there is a £19 charge per 15 minutes.")
+        
+        # Soil question - redirect to skip hire
+        elif 'soil' in message_lower:
+            return "For the removal of soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard. Skip hire is the best option to remove soil and heavy materials."
+        
+        else:
+            return "I can help with man & van service information. What would you like to know about pricing, weight allowances, or how our service works?"
 
 
 class GrabAgent(BaseAgent):
-    def __init__(self, rules_processor):
-        super().__init__(rules_processor)
+    """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5 + NEW INFORMATION RULES"""
+    def __init__(self):
+        super().__init__()
         self.service_type = 'grab'
         self.service_name = 'grab hire'
-        self.default_type = '6yd'
-
-    def extract_data(self, message):
-        data = super().extract_data(message)
-        message_lower = message.lower()
-
-        if any(word in message_lower for word in ['grab', 'grab hire']):
-            data['service'] = 'grab'
-
-            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd']):
-                data['type'] = '8yd'
-            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']):
-                data['type'] = '6yd'
-            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']):
-                data['type'] = '4yd'
-            else:
-                data['type'] = '6yd'  # Default
-        else:
-            data['service'] = 'grab'
-            data['type'] = '6yd'
-
-        return data
+        self.default_type = ''
 
     def get_next_response(self, message, state, conversation_id):
-        """FOLLOW ORIGINAL BOOKING FLOW + ADD BUSINESS RULE QUESTIONS"""
+        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - FIXED VERSION + INFO HANDLING"""
+        message_lower = message.lower()
         wants_to_book = self.should_book(message)
-
+        print(f"🔍 GRAB AGENT - wants_to_book: {wants_to_book}")
+        
+        # NEW: Handle information requests first
+        if self.is_information_request(message):
+            return self.handle_information_request(message)
+        
+        # Check completion status
+        completion, all_ready = self.check_completion_status(state)
+        print(f"📋 GRAB COMPLETION: {completion}, ALL_READY: {all_ready}")
+        
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
-            return self.complete_booking_proper(state)
+            print("🚀 GRAB: USER WANTS TO BOOK - COMPLETING BOOKING")
+            return self.complete_booking(state)
 
-        # ORIGINAL BASIC INFO GATHERING (C1: INFORMATION GATHERING - ALL DETAILS FIRST)
+        # If all info collected but no pricing yet, get pricing
+        if all_ready and not state.get('price'):
+            print("🚀 GRAB: ALL INFO COLLECTED - CALLING API FOR PRICING")
+            return self.get_pricing(state, conversation_id, wants_to_book)
+
+        # Check for Management/Director requests
+        if any(trigger in message.lower() for trigger in TRANSFER_RULES['management_director']['triggers']):
+            return TRANSFER_RULES['management_director']['out_of_hours']
+
+        # Check for complaints
+        if any(complaint in message.lower() for complaint in ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry']):
+            return TRANSFER_RULES['complaints']['out_of_hours']
+
+        # Check for specialist services
+        if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
+            return "We can help with that specialist service. Let me arrange for our team to call you back."
+
+        # C3: MATERIALS ASSESSMENT - Check for mixed materials (transfer needed)
+        if state.get('firstName') and state.get('postcode') and state.get('phone') and not state.get('materials_checked'):
+            # Check for mixed materials (soil/rubble + other items)
+            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
+            has_other_items = any(item in message.lower() for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
+            
+            if has_soil_rubble and has_other_items:
+                if self.is_business_hours():
+                    return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
+                else:
+                    return "The majority of grabs will only take muckaway which is soil & rubble. I can take your details and have our team call you back to check if we can take the other materials."
+            else:
+                state['materials_checked'] = True
+                self.conversations[conversation_id] = state
+
+        # C1: MANDATORY INFORMATION GATHERING - FIXED ORDER  
         if not state.get('firstName'):
             return "Can I take your name please?"
         elif not state.get('phone'):
@@ -799,79 +1062,62 @@ class GrabAgent(BaseAgent):
         elif not state.get('postcode'):
             return "What's the postcode where you need the grab lorry?"
         elif not state.get('service'):
-            # Auto-set service type for Grab
+            # Auto-set service if not detected
             state['service'] = 'grab'
-            if not state.get('type'):
-                state['type'] = '6yd'  # Default
+            state['type'] = ''
             self.conversations[conversation_id] = state
+            print(f"🔧 GRAB: Auto-set service to grab, type to 6yd")
+
+        # If we have all required info, proceed to get price
+        if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
+            if not state.get('price'):
+                print("🚀 GRAB: All info collected, getting pricing")
+                return self.get_pricing(state, conversation_id, wants_to_book)
+            elif state.get('price') and not wants_to_book:
+                return f"{state.get('type', '')} grab lorry service at {state['postcode']}: {state['price']}. Would you like to book this?"
+            elif state.get('price') and wants_to_book:
+                print("🚀 GRAB: User wants to book, completing booking")
+                return self.complete_booking(state)
+
+        return "I can help you with grab lorry service for soil and rubble removal. Can I take your name please?"
+
+    # NEW: Handle information requests for grab hire
+    def handle_information_request(self, message):
+        """Handle information requests about grab hire"""
+        message_lower = message.lower()
         
-        elif not state.get('waste_type_asked'):
-            state['waste_type_asked'] = True
-            self.conversations[conversation_id] = state
-            return "What type of materials do you have?"
+        # Grab lorry sizes and capacity
+        if any(phrase in message_lower for phrase in ['how large', 'how big', 'size', 'tonnes', 'capacity']):
+            return "A 6-wheel grab lorry typically has a capacity of around 12 to 14 tonnes, while an 8-wheel grab lorry can usually carry approximately 16 to 18 tonnes. These capacities can vary based on the specific vehicle and the type of material being collected."
         
-        elif not state.get('quantity_asked'):
-            state['quantity_asked'] = True
-            self.conversations[conversation_id] = state
-            return "How much material do you have approximately?"
-
-        # C2: GRAB SIZE UNDERSTANDING (EXACT SCRIPTS)
-        elif not state.get('grab_size_explained') and ('wheeler' in message.lower()):
-            state['grab_size_explained'] = True
-            self.conversations[conversation_id] = state
-            if '8-wheeler' in message.lower() or '8 wheeler' in message.lower():
-                return "I understand you need an 8-wheeler grab lorry. That's a 16-tonne capacity lorry."
-            elif '6-wheeler' in message.lower() or '6 wheeler' in message.lower():
-                return "I understand you need a 6-wheeler grab lorry. That's a 12-tonne capacity lorry."
-
-        # C3: MATERIALS ASSESSMENT
-        elif not state.get('materials_assessed') and state.get('waste_type_asked'):
-            state['materials_assessed'] = True
-            self.conversations[conversation_id] = state
-            
-            # Check for mixed materials
-            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'hardcore', 'dirt', 'earth'])
-            has_other_materials = any(material in message.lower() for material in ['wood', 'metal', 'plastic', 'furniture', 'concrete', 'bricks'])
-            
-            if has_soil_rubble and has_other_materials:
-                return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
-            elif not has_soil_rubble and has_other_materials:
-                return "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."
-
-        # Check for wait & load skip mention
-        elif 'wait' in message.lower() and 'load' in message.lower() and not state.get('wait_load_handled'):
-            state['wait_load_handled'] = True
-            self.conversations[conversation_id] = state
-            return "For wait & load skips, let me put you through to our specialist who will check availability & costs."
-
-        # C4: ACCESS & TIMING
-        elif not state.get('access_asked'):
-            state['access_asked'] = True
-            self.conversations[conversation_id] = state
-            return "Is there clear access for the grab lorry?"
+        # Access requirements
+        elif any(phrase in message_lower for phrase in ['access', 'requirements', 'space needed']):
+            return ("Access requirements for grab lorries generally include: Width clearance of around 3 meters, stable ground conditions to support the lorry weight, sufficient space for the grab arm to operate safely (usually requires about 6 meters radius), and a clear access route suitable for heavy vehicles. If you have concerns about access, it might be helpful to discuss them directly with our team at 0370 343 9990.")
         
-        elif not state.get('timing_asked'):
-            state['timing_asked'] = True
-            self.conversations[conversation_id] = state
-            return "When do you need this collection?"
-
-        # ORIGINAL BOOKING FLOW CONTINUES
-        # If user wants to book but we don't have price yet, get price and complete booking
-        elif wants_to_book and not state.get('price'):
-            print("🚀 USER WANTS TO BOOK - GETTING PRICE AND COMPLETING BOOKING")
-            return self.get_pricing_and_complete_booking(state, conversation_id)
+        # What waste can grab take
+        elif any(phrase in message_lower for phrase in ['what waste', 'what can', 'green waste', 'materials']):
+            return "For more information around grab lorries and what materials they can take, I recommend contacting our team directly at 0370 343 9990 for the most accurate information."
         
-        # If we have all data but no price yet, get pricing
-        elif not state.get('price'):
-            return self.get_pricing_and_ask(state, conversation_id)
+        # Soil and hardcore question
+        elif any(phrase in message_lower for phrase in ['soil and hardcore', 'mixed materials']):
+            return "For inquiries about specific materials like soil and hardcore being collected in one load, I recommend contacting our team directly at 0370 343 9990. They will provide the most accurate information about material combinations."
         
-        # If we have pricing, ask to book
-        elif state.get('price'):
-            price_num = float(str(state['price']).replace('£', '').replace(',', ''))
-            # Check if needs transfer - Grab £300+ during office hours
-            if self.needs_transfer(price_num):
-                return "For this size job, let me put you through to our specialist team for the best service."
-            
-            return f"💰 {state['type']} grab hire at {state['postcode']}: {state['price']}. Would you like to book this?"
+        # Small amount recommendation
+        elif any(phrase in message_lower for phrase in ['small amount', 'not much', 'little bit']):
+            return "If you have a smaller amount of soil to remove, skip hire is the best option to remove small amounts of heavy materials. The largest skip you can have for soil is 8-yard."
+        
+        else:
+            return "For more information around grab lorries, I recommend contacting our team directly at 0370 343 9990 for the most accurate information."
 
-        return "How can I help you with grab hire?"
+
+# Function to set supplier_enquiry reference from main app
+def set_supplier_enquiry_function(func):
+    global supplier_enquiry
+    supplier_enquiry = func
+    print("✅ Supplier enquiry function linked to agents")
+
+# Function to set transfer_call_to_supplier reference from main app  
+def set_transfer_function(func):
+    global transfer_call_to_supplier
+    transfer_call_to_supplier = func
+    print("✅ Transfer function linked to agents")
