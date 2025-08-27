@@ -186,7 +186,7 @@
             padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            cursor: pointer; /* NEW: Add cursor pointer to indicate it's clickable */
+            cursor: pointer;
         }
         .conversation-header {
             font-size: 1.5rem;
@@ -199,8 +199,6 @@
         .calls-table {
             margin-top: 20px;
         }
-
-        /* NEW: Modal Styles */
         .modal {
             display: none;
             position: fixed;
@@ -215,7 +213,6 @@
             justify-content: center;
             align-items: center;
         }
-
         .modal-content {
             background-color: #fefefe;
             padding: 30px;
@@ -225,7 +222,6 @@
             box-shadow: 0 5px 15px rgba(0,0,0,0.3);
             position: relative;
         }
-
         .close-btn {
             color: #aaa;
             float: right;
@@ -235,14 +231,12 @@
             top: 15px;
             right: 25px;
         }
-
         .close-btn:hover,
         .close-btn:focus {
             color: #000;
             text-decoration: none;
             cursor: pointer;
         }
-
         .transcript-text {
             white-space: pre-wrap;
             font-family: monospace;
@@ -261,7 +255,6 @@
             <h1>WasteKing Call Tracker</h1>
             <p>ElevenLabs AI Agent Call Tracking & Follow-up System</p>
         </div>
-
         <div class="config-info">
             <h3>System Configuration</h3>
             <div class="config-grid">
@@ -284,75 +277,73 @@
                     <div class="config-value status-ok">{{ supplier_phone }}</div>
                 </div>
             </div>
-            
             <div class="webhook-url">
                 <strong>Webhook URL for ElevenLabs:</strong><br>
                 {{ webhook_url }}
             </div>
         </div>
-
         <div class="calls-section">
             <div class="calls-header">
                 <h2 class="calls-title">Recent Calls ({{ call_count }})</h2>
                 <button class="refresh-btn" onclick="window.location.reload()">Refresh</button>
             </div>
-
+            <div id="live-calls-container">
             {% if grouped_calls %}
-            {% for conv_id, calls in grouped_calls.items() %}
-            <div class="conversation-group" onclick="showTranscript('{{ conv_id }}')">
-                <div class="conversation-header">
-                    Conversation ID: {{ conv_id }}
-                    {% if calls|length > 1 %}
-                        <span style="font-size: 0.8em; font-weight: normal; color: #4a5568;"> ({{ calls|length }} parts)</span>
-                    {% endif %}
+                {% for conv_id, calls in grouped_calls.items() %}
+                <div class="conversation-group" onclick="showTranscript('{{ conv_id }}')">
+                    <div class="conversation-header">
+                        Conversation ID: {{ conv_id }}
+                        {% if calls|length > 1 %}
+                            <span style="font-size: 0.8em; font-weight: normal; color: #4a5568;"> ({{ calls|length }} parts)</span>
+                        {% endif %}
+                    </div>
+                    <table class="calls-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Customer Phone</th>
+                                <th>Duration</th>
+                                <th>Status</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for call in calls %}
+                            <tr>
+                                <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
+                                <td>{{ call.call_type or 'Customer Call' }}</td>
+                                <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
+                                <td>{{ call.duration or 0 }}s</td>
+                                <td>
+                                    <span class="call-status status-{{ call.status or 'completed' }}">
+                                        {{ (call.status or 'completed').title() }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if call.transcript %}
+                                        {{ call.transcript[:100] }}...
+                                    {% elif call.customer_request %}
+                                        {{ call.customer_request[:100] }}...
+                                    {% else %}
+                                        No details
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
-                <table class="calls-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Type</th>
-                            <th>Customer Phone</th>
-                            <th>Duration</th>
-                            <th>Status</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for call in calls %}
-                        <tr>
-                            <td>{{ call.timestamp[:19] if call.timestamp else 'N/A' }}</td>
-                            <td>{{ call.call_type or 'Customer Call' }}</td>
-                            <td>{{ call.customer_phone or call.to_number or 'N/A' }}</td>
-                            <td>{{ call.duration or 0 }}s</td>
-                            <td>
-                                <span class="call-status status-{{ call.status or 'completed' }}">
-                                    {{ (call.status or 'completed').title() }}
-                                </span>
-                            </td>
-                            <td>
-                                {% if call.transcript %}
-                                    {{ call.transcript[:100] }}...
-                                {% elif call.customer_request %}
-                                    {{ call.customer_request[:100] }}...
-                                {% else %}
-                                    No details
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% endfor %}
+                {% endfor %}
             {% else %}
-            <div class="empty-calls">
-                <h3>No Calls Yet</h3>
-                <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
-            </div>
+                <div class="empty-calls">
+                    <h3>No Calls Yet</h3>
+                    <p>Webhook integration is active and ready to receive call data from ElevenLabs.</p>
+                </div>
             {% endif %}
+            </div>
         </div>
     </div>
-
     <div id="transcriptModal" class="modal">
       <div class="modal-content">
         <span class="close-btn" onclick="closeModal()">&times;</span>
@@ -360,16 +351,14 @@
         <div class="transcript-text" id="transcriptContent"></div>
       </div>
     </div>
-
 <script>
-    // Store call data in a JavaScript variable for easy access
+    // Store all initial grouped call data in a JavaScript variable for easy access
     const groupedCalls = JSON.parse('{{ grouped_calls | tojson }}');
-
-    // Use a global variable to keep track of the last known conversation ID
-    let lastConversationId = null;
     
-    // Set the initial last conversation ID on page load
+    let lastConversationId = null;
+
     if (Object.keys(groupedCalls).length > 0) {
+        // Set the initial last conversation ID on page load
         lastConversationId = Object.keys(groupedCalls)[0];
     }
     
@@ -378,13 +367,10 @@
         if (!calls || calls.length === 0) {
             return;
         }
-
         const modalTitle = document.getElementById('modal-title');
         const transcriptContent = document.getElementById('transcriptContent');
         const transcriptModal = document.getElementById('transcriptModal');
-        
         modalTitle.textContent = `Transcript for Conversation ID: ${convId}`;
-        
         let fullTranscript = '';
         calls.forEach((call, index) => {
             fullTranscript += `--- Call Part ${index + 1} (${call.call_type || 'N/A'}) ---\n`;
@@ -393,49 +379,91 @@
             fullTranscript += `Status: ${call.status || 'N/A'}\n\n`;
             fullTranscript += `${call.transcript || 'No transcript available.'}\n\n`;
         });
-        
         transcriptContent.textContent = fullTranscript;
         transcriptModal.style.display = "flex";
     }
-
+    
     function closeModal() {
         const transcriptModal = document.getElementById('transcriptModal');
         transcriptModal.style.display = "none";
     }
-
+    
     window.onclick = function(event) {
         const transcriptModal = document.getElementById('transcriptModal');
         if (event.target == transcriptModal) {
             closeModal();
         }
     }
-
+    
     async function fetchNewCalls() {
         try {
             const url = `/api/dashboard/live_calls?last_id=${lastConversationId}`;
             const response = await fetch(url);
             const data = await response.json();
-
+            
             if (data.success && data.new_calls.length > 0) {
                 // Update the last known ID
-                lastConversationId = data.new_calls[0].conversation_id;
+                lastConversationId = data.keys(data.new_calls[0].conversation_id)[0];
                 
-                const callsSection = document.querySelector('.calls-section');
+                const callsContainer = document.getElementById('live-calls-container');
                 
-                // For a simple demonstration, just reload the page to show new calls
-                // A more advanced solution would inject HTML dynamically.
-                window.location.reload();
+                // Group new calls by conversation ID for rendering
+                const newGroupedCalls = {};
+                data.new_calls.forEach(call => {
+                    if (!newGroupedCalls[call.conversation_id]) {
+                        newGroupedCalls[call.conversation_id] = [];
+                    }
+                    newGroupedCalls[call.conversation_id].push(call);
+                });
+                
+                // Add new conversations to the top of the list
+                let newHtml = '';
+                for (const convId in newGroupedCalls) {
+                    const calls = newGroupedCalls[convId];
+                    newHtml += `
+                        <div class="conversation-group" onclick="showTranscript('${convId}')">
+                            <div class="conversation-header">
+                                Conversation ID: ${convId}
+                                <span style="font-size: 0.8em; font-weight: normal; color: #4a5568;"> (${calls.length} parts)</span>
+                            </div>
+                            <table class="calls-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Type</th>
+                                        <th>Customer Phone</th>
+                                        <th>Duration</th>
+                                        <th>Status</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${calls.map(call => `
+                                        <tr>
+                                            <td>${call.timestamp.slice(0, 19) || 'N/A'}</td>
+                                            <td>${call.call_type || 'Customer Call'}</td>
+                                            <td>${call.customer_phone || call.to_number || 'N/A'}</td>
+                                            <td>${call.duration || 0}s</td>
+                                            <td><span class="call-status status-${call.status || 'completed'}">${(call.status || 'completed').title()}</span></td>
+                                            <td>${(call.transcript || call.customer_request || 'No details').substring(0, 100)}...</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                    // Update the groupedCalls object on the client side
+                    groupedCalls[convId] = calls;
+                }
+                callsContainer.insertAdjacentHTML('afterbegin', newHtml);
             }
         } catch (error) {
             console.error("Failed to fetch new calls:", error);
         }
     }
-
+    
     // Fetch new calls every 5 seconds
     setInterval(fetchNewCalls, 5000);
 </script>
 </body>
 </html>
-
-
-
