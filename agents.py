@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 from utils.wasteking_api import complete_booking, create_booking, get_pricing
 
-# COMPLETE HARDCODED BUSINESS RULES - EVERY SINGLE RULE FROM PDF + NEW RULES
+# COMPLETE HARDCODED BUSINESS RULES - EVERY SINGLE RULE FROM PDF - ORIGINAL
 OFFICE_HOURS = {
     'monday_thursday': {'start': 8, 'end': 17},
     'friday': {'start': 8, 'end': 16.5},
@@ -31,33 +31,6 @@ TRANSFER_RULES = {
         'office_hours': 'Transfer immediately',
         'out_of_hours': 'Take details + SMS notification to +447823656762'
     }
-}
-
-# NEW: PROHIBITED ITEMS IN SKIPS - EXACT LIST FROM FEEDBACK
-PROHIBITED_ITEMS_SKIP = [
-    'fridges', 'freezers', 'fridge', 'freezer',
-    'tv', 'screens', 'television', 'monitor',
-    'carpets', 'carpet',
-    'paint', 'liquid', 'liquids',
-    'plasterboard', 'plaster board',
-    'mattress', 'mattresses',
-    'gas cylinder', 'gas cylinders',
-    'tyre', 'tyres', 'tire', 'tires',
-    'air conditioning', 'air con', 'ac units'
-]
-
-# NEW: SKIP SIZE RULES FOR DIFFERENT WASTE TYPES
-SKIP_SIZE_RULES = {
-    'soil_rubble_max': '8yd',  # Maximum skip size for soil/rubble
-    'general_max': '40yd',     # RORO 40-yard is the largest overall
-    'heavy_materials': ['soil', 'rubble', 'concrete', 'bricks', 'hardcore', 'dirt', 'earth']
-}
-
-# NEW: MAN & VAN WEIGHT ALLOWANCES
-MAV_WEIGHT_ALLOWANCES = {
-    'per_cubic_yard': 100,  # 100kg per cubic yard
-    'overtime_charge': 19,  # £19 per 15 minutes over time
-    'standard_message': "We allow 100 kilos per cubic yard - for example, 5 yards would be 500 kilos. The majority of our collections are done under our generous weight allowances."
 }
 
 SKIP_HIRE_RULES = {
@@ -321,19 +294,19 @@ class BaseAgent:
         self.conversations = {}  # Store conversation state
 
     def process_message(self, message, conversation_id="default"):
-        """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES"""
+        """MAIN ENTRY POINT - FOLLOW ALL BUSINESS RULES - ORIGINAL"""
         state = self.conversations.get(conversation_id, {})
-        print(f"📂 LOADED STATE: {state}")
+        print(f"LOADED STATE: {state}")
 
         # Extract new data from message
         new_data = self.extract_data(message)
-        print(f"🔍 NEW DATA: {new_data}")
+        print(f"NEW DATA: {new_data}")
 
         # Merge state - PRESERVE EXISTING DATA PROPERLY
         for key, value in new_data.items():
             if value and value.strip():  # Only update if new value is not empty/whitespace
                 state[key] = value
-        print(f"🔄 MERGED STATE: {state}")
+        print(f"MERGED STATE: {state}")
 
         # CRITICAL: Ensure state persistence
         self.conversations[conversation_id] = state.copy()
@@ -343,12 +316,12 @@ class BaseAgent:
         
         # Save state again after processing - DOUBLE CHECK
         self.conversations[conversation_id] = state.copy()
-        print(f"💾 FINAL STATE SAVED: {self.conversations[conversation_id]}")
+        print(f"FINAL STATE SAVED: {self.conversations[conversation_id]}")
         
         return response
 
     def check_completion_status(self, state):
-        """Track what we have and what we need"""
+        """Track what we have and what we need - ORIGINAL"""
         completion = {
             'name': 'yes' if state.get('firstName') else 'no',
             'address': 'yes' if state.get('postcode') else 'no', 
@@ -357,83 +330,14 @@ class BaseAgent:
         }
         
         all_ready = all(status == 'yes' for status in completion.values())
-        print(f"📋 COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
+        print(f"COMPLETION STATUS: {completion} | ALL READY: {all_ready}")
         
         return completion, all_ready
 
-    # NEW: Check if question is asking for information (not booking)
-    def is_information_request(self, message):
-        """Check if customer is asking for information rather than booking"""
-        info_keywords = [
-            'what are', 'what is', 'can i put', 'do i need', 'tell me about',
-            'explain', 'how much is', 'what size', 'how large', 'how wide',
-            'what waste can', 'can you take', 'requirements', 'allowance',
-            'prohibited', 'largest', 'smallest', 'information', 'details'
-        ]
-        return any(keyword in message.lower() for keyword in info_keywords)
-
-    # NEW: Check for prohibited items in skip
-    def check_prohibited_items_skip(self, message):
-        """Check if message mentions items prohibited in skips"""
-        message_lower = message.lower()
-        prohibited_found = []
-        
-        for item in PROHIBITED_ITEMS_SKIP:
-            if item in message_lower:
-                prohibited_found.append(item)
-        
-        return prohibited_found
-
-    # NEW: Check if soil/heavy materials for service recommendation
-    def check_soil_heavy_materials(self, message):
-        """Check if message mentions soil or heavy materials"""
-        message_lower = message.lower()
-        heavy_materials = ['soil', 'rubble', 'concrete', 'bricks', 'hardcore', 'dirt', 'earth', 'tons', 'tonnes']
-        
-        for material in heavy_materials:
-            if material in message_lower:
-                return True
-        return False
-
     def extract_data(self, message):
-        """EXTRACT ALL CUSTOMER DATA - FOLLOW EXTRACTION RULES"""
+        """EXTRACT ALL CUSTOMER DATA - FOLLOW EXTRACTION RULES - ORIGINAL"""
         data = {}
         message_lower = message.lower()
-
-        # NEW: Extract special items (supplements) that affect pricing
-        supplements = []
-        supplement_mappings = {
-            'fridge': 'fridge',
-            'freezer': 'freezer', 
-            'fridges': 'fridge',
-            'freezers': 'freezer',
-            'sofa': 'sofa',
-            'sofas': 'sofa',
-            'mattress': 'mattress',
-            'mattresses': 'mattress',
-            'upholstered furniture': 'upholstered_furniture',
-            'upholstered chair': 'upholstered_furniture',
-            'upholstered chairs': 'upholstered_furniture',
-            'chair': 'chair',  # Will be checked for upholstery context
-            'chairs': 'chairs'  # Will be checked for upholstery context
-        }
-        
-        for item_phrase, supplement_code in supplement_mappings.items():
-            if item_phrase in message_lower:
-                # Special handling for chairs - only if upholstered context
-                if supplement_code in ['chair', 'chairs']:
-                    if any(context in message_lower for context in ['upholstered', 'fabric', 'leather', 'cushioned']):
-                        supplements.append('upholstered_furniture')
-                    # Otherwise assume furniture chairs need surcharge
-                    else:
-                        supplements.append('upholstered_furniture')  # Safe assumption for pricing
-                else:
-                    supplements.append(supplement_code)
-        
-        # Remove duplicates
-        if supplements:
-            data['supplements'] = list(set(supplements))
-            print(f"✅ Extracted supplements: {data['supplements']}")
 
         # Postcode regex - requires complete postcode format like LS14ED
         postcode_match = re.search(r'([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})', message.upper())
@@ -441,7 +345,7 @@ class BaseAgent:
             postcode = postcode_match.group(1).replace(' ', '')
             if len(postcode) >= 5:
                 data['postcode'] = postcode
-                print(f"✅ Extracted complete postcode: {data['postcode']}")
+                print(f"Extracted complete postcode: {data['postcode']}")
 
         # Phone extraction - handle multiple formats
         phone_patterns = [
@@ -462,16 +366,16 @@ class BaseAgent:
                 phone_number = ''.join(phone_parts)
                 if len(phone_number) >= 10:  # Valid UK phone number
                     data['phone'] = phone_number
-                    print(f"✅ Extracted phone: {data['phone']}")
+                    print(f"Extracted phone: {data['phone']}")
                     break
 
         # Name extraction - FIXED: Don't extract "Yes" as name
         if 'kanchen' in message_lower or 'kanchan' in message_lower:
             data['firstName'] = 'Kanchan'
-            print(f"✅ Extracted name: Kanchan")
+            print(f"Extracted name: Kanchan")
         elif 'jackie' in message_lower:
             data['firstName'] = 'Jackie'
-            print(f"✅ Extracted name: Jackie")
+            print(f"Extracted name: Jackie")
         else:
             name_patterns = [
                 r'[Nn]ame\s+(?:is\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
@@ -489,7 +393,7 @@ class BaseAgent:
                     # RULE: Don't extract common words as names
                     if potential_name.lower() not in ['yes', 'no', 'there', 'what', 'how', 'confirmed', 'phone', 'please']:
                         data['firstName'] = potential_name
-                        print(f"✅ Extracted name: {data['firstName']}")
+                        print(f"Extracted name: {data['firstName']}")
                         break
 
         # SERVICE DETECTION - CRITICAL FOR PROPER ROUTING
@@ -545,7 +449,7 @@ class BaseAgent:
         
         if found_waste:
             data['waste_type'] = ', '.join(found_waste)
-            print(f"✅ Extracted waste type: {data['waste_type']}")
+            print(f"Extracted waste type: {data['waste_type']}")
 
         # Extract location information
         location_phrases = [
@@ -559,13 +463,13 @@ class BaseAgent:
         for phrase in location_phrases:
             if phrase in message_lower:
                 data['location'] = message.strip()
-                print(f"✅ Extracted location: {data['location']}")
+                print(f"Extracted location: {data['location']}")
                 break
 
         return data
 
     def should_book(self, message):
-        """Check if user wants to proceed with booking"""
+        """Check if user wants to proceed with booking - ORIGINAL"""
         message_lower = message.lower()
         
         # Direct booking requests
@@ -591,7 +495,7 @@ class BaseAgent:
         return any(word in message_lower for word in positive_words)
 
     def is_business_hours(self):
-        """Check if it's business hours"""
+        """Check if it's business hours - ORIGINAL"""
         now = datetime.now()
         day_of_week = now.weekday()  # 0=Monday, 6=Sunday
         hour = now.hour
@@ -605,7 +509,7 @@ class BaseAgent:
         return False  # Sunday closed
 
     def needs_transfer(self, price):
-        """Check if transfer is needed based on service and price"""
+        """Check if transfer is needed based on service and price - ORIGINAL"""
         if self.service_type == 'skip':
             return False  # Skip hire: no limit, never transfer
         elif self.service_type == 'mav' and price >= 500:
@@ -615,38 +519,36 @@ class BaseAgent:
         return False
 
     def validate_postcode_with_customer(self, current_postcode):
-        """Ask customer to confirm postcode if pricing fails"""
+        """Ask customer to confirm postcode if pricing fails - ORIGINAL"""
         if not current_postcode or len(current_postcode) < 5:
             return "Could you please provide your complete postcode? For example, LS14ED rather than just LS1."
         else:
             return f"I'm having trouble finding pricing for {current_postcode}. Could you please confirm your complete postcode is correct?"
 
-    # CORE FUNCTION 1: GET PRICING ONLY
+    # CORE FUNCTION 1: GET PRICING ONLY - ORIGINAL
     def get_pricing(self, state, conversation_id, wants_to_book=False):
-        """CORE FUNCTION: Get pricing and present to user - ACTUAL API CALLS WITH SUPPLEMENTS"""
+        """CORE FUNCTION: Get pricing and present to user - ACTUAL API CALLS - ORIGINAL"""
         try:
-            print("📞 CALLING CREATE_BOOKING API...")
+            print("CALLING CREATE_BOOKING API...")
             booking_result = create_booking()
             if not booking_result.get('success'):
-                print("❌ CREATE_BOOKING FAILED")
+                print("CREATE_BOOKING FAILED")
                 return "Unable to get pricing right now. Let me put you through to our team."
             
             booking_ref = booking_result['booking_ref']
             service_type = state.get('type', self.default_type)
             
-            # NEW: Include supplements in pricing call
-            supplements = state.get('supplements', [])
-            print(f"📞 CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}, supplements={supplements}")
-            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type, supplements)
+            print(f"CALLING GET_PRICING API... postcode={state['postcode']}, service={state['service']}, type={service_type}")
+            price_result = get_pricing(booking_ref, state['postcode'], state['service'], service_type)
             
             if not price_result.get('success'):
-                print("❌ GET_PRICING FAILED - POSTCODE ISSUE")
+                print("GET_PRICING FAILED - POSTCODE ISSUE")
                 return self.validate_postcode_with_customer(state.get('postcode'))
             
             price = price_result['price']
             price_num = float(str(price).replace('£', '').replace(',', ''))
             
-            print(f"💰 GOT PRICE: {price} (numeric: {price_num}) with supplements: {supplements}")
+            print(f"GOT PRICE: {price} (numeric: {price_num})")
             
             if price_num > 0:
                 state['price'] = price
@@ -658,62 +560,47 @@ class BaseAgent:
                 if self.needs_transfer(price_num):
                     # Only check office hours if transfer is actually needed
                     if self.is_business_hours():
-                        print("🔄 TRANSFER NEEDED - OFFICE HOURS")
+                        print("TRANSFER NEEDED - OFFICE HOURS")
                         return "For this size job, let me put you through to our specialist team for the best service."
                     else:
-                        print("🌙 OUT OF HOURS - MAKE THE SALE INSTEAD")
+                        print("OUT OF HOURS - MAKE THE SALE INSTEAD")
                         if wants_to_book:
-                            print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                            print("USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
                             return self.complete_booking(state)
                         else:
-                            # NEW: Mention supplements in pricing response if any
-                            response = f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}"
-                            if supplements:
-                                supplement_names = {'fridge': 'fridge', 'freezer': 'freezer', 'sofa': 'sofa', 'mattress': 'mattress', 'upholstered_furniture': 'upholstered furniture'}
-                                items = [supplement_names.get(s, s) for s in supplements]
-                                response += f" (including surcharge for {', '.join(items)})"
-                            response += ". Would you like to book this?"
-                            return response
+                            return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
                 else:
                     # No transfer needed
                     if wants_to_book:
-                        print("🚀 USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
+                        print("USER ALREADY WANTS TO BOOK - COMPLETING IMMEDIATELY")
                         return self.complete_booking(state)
                     else:
-                        print("✅ NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
-                        # NEW: Mention supplements in pricing response if any
-                        response = f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}"
-                        if supplements:
-                            supplement_names = {'fridge': 'fridge', 'freezer': 'freezer', 'sofa': 'sofa', 'mattress': 'mattress', 'upholstered_furniture': 'upholstered furniture'}
-                            items = [supplement_names.get(s, s) for s in supplements]
-                            response += f" (including surcharge for {', '.join(items)})"
-                        response += ". Would you like to book this?"
-                        return response
+                        print("NO TRANSFER NEEDED - PRESENTING PRICE TO USER")
+                        return f"{state['type']} {self.service_name} at {state['postcode']}: {state['price']}. Would you like to book this?"
             else:
-                print("❌ ZERO PRICE RETURNED")
+                print("ZERO PRICE RETURNED")
                 return self.validate_postcode_with_customer(state.get('postcode'))
                 
         except Exception as e:
-            print(f"❌ PRICING ERROR: {e}")
+            print(f"PRICING ERROR: {e}")
             return "Unable to get pricing right now. Let me put you through to our team."
 
-    # CORE FUNCTION 2: COMPLETE BOOKING ONLY
+    # CORE FUNCTION 2: COMPLETE BOOKING ONLY - ORIGINAL
     def complete_booking(self, state):
-        """CORE FUNCTION: Complete booking with payment link - MUST CALL ACTUAL API WITH SUPPLEMENTS"""
+        """CORE FUNCTION: Complete booking with payment link - MUST CALL ACTUAL API - ORIGINAL"""
         try:
-            print("🚀 COMPLETING BOOKING...")
+            print("COMPLETING BOOKING...")
             
-            # Prepare customer data including supplements
+            # Prepare customer data
             customer_data = {
                 'firstName': state.get('firstName'),
                 'phone': state.get('phone'),
                 'postcode': state.get('postcode'),
                 'service': state.get('service'),
-                'type': state.get('type'),
-                'supplements': state.get('supplements', [])  # NEW: Include supplements
+                'type': state.get('type')
             }
             
-            print(f"📋 CUSTOMER DATA WITH SUPPLEMENTS: {customer_data}")
+            print(f"CUSTOMER DATA: {customer_data}")
             
             # RULE: Call the complete booking API - ACTUAL API CALL
             result = complete_booking(customer_data)
@@ -723,7 +610,7 @@ class BaseAgent:
                 price = result['price']
                 payment_link = result.get('payment_link')
                 
-                print(f"✅ BOOKING SUCCESS: {booking_ref}, {price}")
+                print(f"BOOKING SUCCESS: {booking_ref}, {price}")
                 
                 # Update state
                 state['booking_completed'] = True
@@ -740,15 +627,15 @@ class BaseAgent:
                 
                 return response
             else:
-                print(f"❌ BOOKING FAILED: {result}")
+                print(f"BOOKING FAILED: {result}")
                 return "Unable to complete booking. Our team will call you back."
                 
         except Exception as e:
-            print(f"❌ BOOKING ERROR: {e}")
+            print(f"BOOKING ERROR: {e}")
             return "Booking issue occurred. Our team will contact you."
 
     def send_sms(self, name, phone, booking_ref, price, payment_link):
-        """RULE: Send SMS with payment link - ACTUAL API CALL"""
+        """RULE: Send SMS with payment link - ACTUAL API CALL - ORIGINAL"""
         try:
             twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
             twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
@@ -762,13 +649,13 @@ class BaseAgent:
                 message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
                 
                 client.messages.create(body=message, from_=twilio_phone, to=formatted_phone)
-                print(f"✅ SMS sent to {phone}")
+                print(f"SMS sent to {phone}")
         except Exception as e:
-            print(f"❌ SMS error: {e}")
+            print(f"SMS error: {e}")
 
 
 class SkipAgent(BaseAgent):
-    """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7 + NEW INFORMATION RULES"""
+    """SKIP HIRE AGENT - FOLLOW ALL RULES A1-A7 - ORIGINAL"""
     def __init__(self):
         super().__init__()
         self.service_type = 'skip'
@@ -776,25 +663,20 @@ class SkipAgent(BaseAgent):
         self.default_type = '8yd'
 
     def get_next_response(self, message, state, conversation_id):
-        """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY + NEW INFORMATION HANDLING"""
+        """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY - ORIGINAL"""
         wants_to_book = self.should_book(message)
-        message_lower = message.lower()
-        
-        # NEW: Handle information requests first (before booking flow)
-        if self.is_information_request(message):
-            return self.handle_information_request(message)
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -833,56 +715,9 @@ class SkipAgent(BaseAgent):
 
         return "How can I help you with skip hire?"
 
-    # NEW: Handle information requests for skip hire
-    def handle_information_request(self, message):
-        """Handle information requests about skip hire"""
-        message_lower = message.lower()
-        
-        # Prohibited items question
-        if any(phrase in message_lower for phrase in ['prohibited', 'what can', 'can i put', 'allowed']):
-            prohibited_items = self.check_prohibited_items_skip(message)
-            if prohibited_items:
-                if any(item in ['sofa', 'sofas', 'upholstered'] for item in prohibited_items):
-                    return "No, sofas are not allowed in skips as they are upholstered furniture. However, we can help you with our Man & Van service. We charge extra due to EA regulations for the way we dispose of sofas and other upholstered items."
-                else:
-                    return f"The prohibited items in skips include: Fridges/Freezers, TV/Screens, Carpets, Paint/Liquid, Plasterboard, Mattresses, Gas cylinders, Tyres, and Air Conditioning units. For specialized waste disposal, please contact our team at 0370 343 9990."
-            else:
-                return "The prohibited items in skips include: Fridges/Freezers, TV/Screens, Carpets, Paint/Liquid, Plasterboard, Mattresses, Gas cylinders, Tyres, and Air Conditioning units."
-        
-        # Skip sizes for heavy materials
-        elif any(phrase in message_lower for phrase in ['largest skip', 'biggest skip', 'soil', 'rubble', 'heavy']):
-            if self.check_soil_heavy_materials(message):
-                return "For soil removal, the largest skip is 8-yard. Larger skips than that are suitable only for light waste, not heavy materials like soil and rubble."
-            else:
-                return "The largest skip is RORO 40-yard. However, for heavy materials like soil and rubble, the largest skip is 8-yard."
-        
-        # Smallest skip
-        elif 'smallest' in message_lower:
-            return "The smallest skip size available is a 2-yard skip, often called a 'mini skip', ideal for small amounts of waste and minor home projects."
-        
-        # Permit questions
-        elif any(phrase in message_lower for phrase in ['permit', 'road', 'driveway']):
-            return "The placement of the skip on your driveway will not require a permit. However, the placement of the skip on the road will require a permit from the council, which we'll arrange for you and include in your quote."
-        
-        # Cubic yard explanation
-        elif 'cubic yard' in message_lower:
-            return "A cubic yard is a unit of volume measurement. To visualize it, imagine a cube that measures one yard (3 feet) on each side. It's useful for understanding how much material can fit in a skip."
-        
-        # Drop-down door skips
-        elif 'dropped down door' in message_lower or 'drop down door' in message_lower:
-            return "Drop-down door skips are large waste containers with a convenient door that allows easy loading. They're ideal for heavy materials as you can walk directly into the skip instead of lifting waste over the sides."
-        
-        # Soil recommendation
-        elif 'tons of soil' in message_lower or 'tonnes of soil' in message_lower:
-            return "For the removal of large amounts of soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard."
-        
-        # General information
-        else:
-            return "I can help with skip hire information. For specific details, please let me know what you'd like to know about skip sizes, pricing, or placement requirements."
-
 
 class MAVAgent(BaseAgent):
-    """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6 + NEW INFORMATION RULES"""
+    """MAN & VAN AGENT - FOLLOW ALL RULES B1-B6 - ORIGINAL"""
     def __init__(self):
         super().__init__()
         self.service_type = 'mav'
@@ -890,22 +725,17 @@ class MAVAgent(BaseAgent):
         self.default_type = '4yd'
 
     def get_next_response(self, message, state, conversation_id):
-        message_lower = message.lower()
         wants_to_book = self.should_book(message)
-
-        # NEW: Handle information requests first
-        if self.is_information_request(message):
-            return self.handle_information_request(message)
 
         completion, all_ready = self.check_completion_status(state)
 
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -919,10 +749,6 @@ class MAVAgent(BaseAgent):
         # Check for specialist services
         if any(service in message.lower() for service in TRANSFER_RULES['specialist_services']['services']):
             return "We can help with that specialist service. Let me arrange for our team to call you back."
-
-        # NEW: Heavy materials check
-        if self.check_soil_heavy_materials(message):
-            return "For the removal of heavy materials like soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard. Skip hire is the best option for heavy materials."
 
         # B2: CHECK FOR HEAVY MATERIALS FIRST (Before info gathering)
         if state.get('firstName') and state.get('postcode') and state.get('phone') and state.get('service') and not state.get('heavy_materials_checked'):
@@ -947,56 +773,24 @@ class MAVAgent(BaseAgent):
             state['service'] = 'mav'
             state['type'] = '4yd'
             self.conversations[conversation_id] = state
-            print(f"🔧 MAV: Auto-set service to mav, type to 4yd")
+            print(f"MAV: Auto-set service to mav, type to 4yd")
 
         # If we have all required info, proceed to get price
         if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
-                print("🚀 MAV: All info collected, getting pricing")
+                print("MAV: All info collected, getting pricing")
                 return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price') and not wants_to_book:
                 return f"{state.get('type', '4yd')} man & van service at {state['postcode']}: {state['price']}. Would you like to book this?"
             elif state.get('price') and wants_to_book:
-                print("🚀 MAV: User wants to book, completing booking")
+                print("MAV: User wants to book, completing booking")
                 return self.complete_booking(state)
 
         return "I can help you with man & van service for furniture removal. What's your name?"
 
-    # NEW: Handle information requests for man & van
-    def handle_information_request(self, message):
-        """Handle information requests about man & van service"""
-        message_lower = message.lower()
-        
-        # Weight allowance questions
-        if any(phrase in message_lower for phrase in ['weight allowance', 'weight limit', 'how much weight']):
-            return MAV_WEIGHT_ALLOWANCES['standard_message']
-        
-        # Estimation help
-        elif any(phrase in message_lower for phrase in ['estimate', 'how much waste', 'how to calculate']):
-            return ("Estimating your waste for man and van service: Try to visualize how many cubic yards your waste might fill - a cubic yard is roughly the size of a standard washing machine. Think in terms of washing machine loads or black bags. The national average is 6 yards for man & van service.")
-        
-        # Upholstered furniture charges
-        elif any(phrase in message_lower for phrase in ['chairs', 'sofa', 'upholstered', 'extra charge']):
-            return "The pricing for man and van service includes removal of typical household items. However, there is a surcharge for supplements - if chairs are upholstered, there will be an extra charge due to EA regulations for the way we dispose of them."
-        
-        # Fridge pricing - NEW RULE: Give immediate price + surcharge
-        elif 'fridge' in message_lower and any(phrase in message_lower for phrase in ['how much', 'price', 'cost']):
-            return "For man and van service with a fridge, I'll need your postcode to give you the exact price. There's a £20 surcharge for fridges due to degassing requirements."
-        
-        # How service works
-        elif any(phrase in message_lower for phrase in ['how does it work', 'how do you charge']):
-            return ("Our man and van service works by the cubic yard. " + MAV_WEIGHT_ALLOWANCES['standard_message'] + " We allow generous labour time and 95% of all jobs are done within the time frame, although if collection goes over our labour time, there is a £19 charge per 15 minutes.")
-        
-        # Soil question - redirect to skip hire
-        elif 'soil' in message_lower:
-            return "For the removal of soil, I would advise skip hire service. The largest skip you can have for soil is 8-yard. Skip hire is the best option to remove soil and heavy materials."
-        
-        else:
-            return "I can help with man & van service information. What would you like to know about pricing, weight allowances, or how our service works?"
-
 
 class GrabAgent(BaseAgent):
-    """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5 + NEW INFORMATION RULES"""
+    """GRAB HIRE AGENT - FOLLOW ALL RULES C1-C5 - ORIGINAL"""
     def __init__(self):
         super().__init__()
         self.service_type = 'grab'
@@ -1004,27 +798,22 @@ class GrabAgent(BaseAgent):
         self.default_type = ''
 
     def get_next_response(self, message, state, conversation_id):
-        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - FIXED VERSION + INFO HANDLING"""
-        message_lower = message.lower()
+        """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - ORIGINAL"""
         wants_to_book = self.should_book(message)
-        print(f"🔍 GRAB AGENT - wants_to_book: {wants_to_book}")
-        
-        # NEW: Handle information requests first
-        if self.is_information_request(message):
-            return self.handle_information_request(message)
+        print(f"GRAB AGENT - wants_to_book: {wants_to_book}")
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
-        print(f"📋 GRAB COMPLETION: {completion}, ALL_READY: {all_ready}")
+        print(f"GRAB COMPLETION: {completion}, ALL_READY: {all_ready}")
         
         # If user wants to book and we have pricing, complete booking immediately
         if wants_to_book and state.get('price') and state.get('booking_ref'):
-            print("🚀 GRAB: USER WANTS TO BOOK - COMPLETING BOOKING")
+            print("GRAB: USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
-            print("🚀 GRAB: ALL INFO COLLECTED - CALLING API FOR PRICING")
+            print("GRAB: ALL INFO COLLECTED - CALLING API FOR PRICING")
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         # Check for Management/Director requests
@@ -1066,58 +855,30 @@ class GrabAgent(BaseAgent):
             state['service'] = 'grab'
             state['type'] = ''
             self.conversations[conversation_id] = state
-            print(f"🔧 GRAB: Auto-set service to grab, type to 6yd")
+            print(f"GRAB: Auto-set service to grab, type to 6yd")
 
         # If we have all required info, proceed to get price
         if state.get('firstName') and state.get('postcode') and state.get('service') and state.get('phone'):
             if not state.get('price'):
-                print("🚀 GRAB: All info collected, getting pricing")
+                print("GRAB: All info collected, getting pricing")
                 return self.get_pricing(state, conversation_id, wants_to_book)
             elif state.get('price') and not wants_to_book:
                 return f"{state.get('type', '')} grab lorry service at {state['postcode']}: {state['price']}. Would you like to book this?"
             elif state.get('price') and wants_to_book:
-                print("🚀 GRAB: User wants to book, completing booking")
+                print("GRAB: User wants to book, completing booking")
                 return self.complete_booking(state)
 
         return "I can help you with grab lorry service for soil and rubble removal. Can I take your name please?"
-
-    # NEW: Handle information requests for grab hire
-    def handle_information_request(self, message):
-        """Handle information requests about grab hire"""
-        message_lower = message.lower()
-        
-        # Grab lorry sizes and capacity
-        if any(phrase in message_lower for phrase in ['how large', 'how big', 'size', 'tonnes', 'capacity']):
-            return "A 6-wheel grab lorry typically has a capacity of around 12 to 14 tonnes, while an 8-wheel grab lorry can usually carry approximately 16 to 18 tonnes. These capacities can vary based on the specific vehicle and the type of material being collected."
-        
-        # Access requirements
-        elif any(phrase in message_lower for phrase in ['access', 'requirements', 'space needed']):
-            return ("Access requirements for grab lorries generally include: Width clearance of around 3 meters, stable ground conditions to support the lorry weight, sufficient space for the grab arm to operate safely (usually requires about 6 meters radius), and a clear access route suitable for heavy vehicles. If you have concerns about access, it might be helpful to discuss them directly with our team at 0370 343 9990.")
-        
-        # What waste can grab take
-        elif any(phrase in message_lower for phrase in ['what waste', 'what can', 'green waste', 'materials']):
-            return "For more information around grab lorries and what materials they can take, I recommend contacting our team directly at 0370 343 9990 for the most accurate information."
-        
-        # Soil and hardcore question
-        elif any(phrase in message_lower for phrase in ['soil and hardcore', 'mixed materials']):
-            return "For inquiries about specific materials like soil and hardcore being collected in one load, I recommend contacting our team directly at 0370 343 9990. They will provide the most accurate information about material combinations."
-        
-        # Small amount recommendation
-        elif any(phrase in message_lower for phrase in ['small amount', 'not much', 'little bit']):
-            return "If you have a smaller amount of soil to remove, skip hire is the best option to remove small amounts of heavy materials. The largest skip you can have for soil is 8-yard."
-        
-        else:
-            return "For more information around grab lorries, I recommend contacting our team directly at 0370 343 9990 for the most accurate information."
 
 
 # Function to set supplier_enquiry reference from main app
 def set_supplier_enquiry_function(func):
     global supplier_enquiry
     supplier_enquiry = func
-    print("✅ Supplier enquiry function linked to agents")
+    print("Supplier enquiry function linked to agents")
 
 # Function to set transfer_call_to_supplier reference from main app  
 def set_transfer_function(func):
     global transfer_call_to_supplier
     transfer_call_to_supplier = func
-    print("✅ Transfer function linked to agents")
+    print("Transfer function linked to agents")
