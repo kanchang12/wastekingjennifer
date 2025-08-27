@@ -2,51 +2,29 @@
 <html>
 <head>
   <title>WasteKing Dashboard</title>
-  <script>
-    let lastId = null;
-
-    async function fetchLiveCalls() {
-      try {
-        const res = await fetch(`/api/dashboard/live_calls?last_id=${lastId || ""}`);
-        const data = await res.json();
-
-        if (data.success && data.new_calls.length > 0) {
-          data.new_calls.forEach(call => {
-            const container = document.getElementById("calls");
-            const div = document.createElement("div");
-            div.innerHTML = `
-              <b>${call.conversation_id}</b> | ${call.timestamp}<br>
-              <i>${call.customerquestion || ""}</i>
-              <hr>
-            `;
-            container.prepend(div); // add newest at top
-            lastId = call.conversation_id;
-          });
-        }
-
-        // schedule the next fetch
-        setTimeout(fetchLiveCalls, 3000); // every 3s
-      } catch (err) {
-        console.error("Live fetch error", err);
-        setTimeout(fetchLiveCalls, 5000); // retry slower on error
-      }
-    }
-
-    window.onload = fetchLiveCalls;
-  </script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .conversation { border: 2px solid #333; margin-bottom: 20px; padding: 10px; border-radius: 8px; }
+    .message { margin: 8px 0; }
+    .customer { color: #0077cc; font-weight: bold; }
+    .agent { color: #009900; }
+    .timestamp { font-size: 12px; color: #666; }
+  </style>
 </head>
 <body>
   <h1>WasteKing Dashboard</h1>
-  <div id="calls">
-    {% for conv_id, calls in grouped_calls.items() %}
+
+  {% for conv_id, calls in grouped_calls.items() %}
+    <div class="conversation">
+      <h2>Conversation: {{ conv_id }}</h2>
       {% for call in calls %}
-        <div>
-          <b>{{ conv_id }}</b> | {{ call.timestamp }}<br>
-          <i>{{ call.customerquestion or '' }}</i>
-          <hr>
+        <div class="message">
+          <div class="timestamp">{{ call.timestamp }}</div>
+          <div class="customer">Customer: {{ call.customer }}</div>
+          <div class="agent">Agent: {{ call.response }}</div>
         </div>
       {% endfor %}
-    {% endfor %}
-  </div>
+    </div>
+  {% endfor %}
 </body>
 </html>
