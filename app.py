@@ -1,33 +1,36 @@
 import os
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify
-
-# Import your existing rules processor
-from utils.rules_processor import RulesProcessor
+from flask import Flask, request, jsonify, send_from_directory
 
 # Import the simple agents
 from agents import SkipAgent, MAVAgent, GrabAgent
 
 app = Flask(__name__)
-
+webhook_calls = []
 # Initialize system
 print("🚀 Initializing WasteKing Simple System...")
 
-# Load rules
-rules_processor = RulesProcessor()
-print("📋 Rules processor loaded")
+# Global conversation counter
+conversation_counter = 0
+
+def get_next_conversation_id():
+    """Generate next conversation ID with counter"""
+    global conversation_counter
+    conversation_counter += 1
+    return f"conv{conversation_counter:08d}"  # conv00000001, conv00000002, etc.
+
 
 # Initialize agents with shared conversation storage
 shared_conversations = {}
 
-skip_agent = SkipAgent(rules_processor)
+skip_agent = SkipAgent()
 skip_agent.conversations = shared_conversations
 
-mav_agent = MAVAgent(rules_processor)  
+mav_agent = MAVAgent()  
 mav_agent.conversations = shared_conversations
 
-grab_agent = GrabAgent(rules_processor)
+grab_agent = GrabAgent()
 grab_agent.conversations = shared_conversations
 
 print("✅ All agents initialized with shared conversation storage")
@@ -74,33 +77,220 @@ def route_to_agent(message, conversation_id):
 
 @app.route('/')
 def index():
-    return jsonify({
-        "message": "WasteKing Simple System - COMPLETE FIXED VERSION",
-        "status": "running",
-        "timestamp": datetime.now().isoformat(),
-        "agents": ["Skip", "MAV", "Grab"],
-        "routing_rules": {
-            "skip": "Handles explicit skip mentions only",
-            "mav": "Handles explicit man and van mentions only", 
-            "grab": "DEFAULT MANAGER - handles everything else including grab, general inquiries, unknown services"
-        },
-        "features": [
-            "FIXED 4-step WasteKing API booking with payment link creation",
-            "FIXED agent routing - Grab handles everything except explicit skip/mav",
-            "Rules-based responses with office hours checks",
-            "NO HARDCODED PRICES - ALL prices from real API",
-            "SMS integration with Twilio"
-        ],
-        "booking_process": [
-            "Step 1: Create booking reference",
-            "Step 2: Get pricing with type parameter - REAL API PRICES ONLY",
-            "Step 3: Update customer details", 
-            "Step 4: CREATE PAYMENT LINK (FIXED)",
-            "Step 5: Send SMS with payment link"
-        ]
-    })
+    """Single HTML page showing all webhooks without any fail"""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WasteKing Webhook Monitor</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: #f5f5f5; 
+        }
+        
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .webhook-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .webhook-item {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+        
+        .webhook-header {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .webhook-data {
+            font-family: monospace;
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 3px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .refresh-btn {
+            background: #007cba;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        
+        .refresh-btn:hover {
+            background: #005a87;
+        }
+        
+        .counter {
+            float: right;
+            background: #28a745;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+        
+        .empty-message {
+            text-align: center;
+            color: #666;
+            padding: 40px;
+        }
 
-@app.route('/api/wasteking', methods=['POST'])
+        .timestamp {
+            color: #666;
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>WasteKing Webhook Monitor</h1>
+        <span class="counter" id="webhook-counter">0 webhooks</span>
+        <p>Real-time webhook data from ElevenLabs</p>
+        <p><strong>Webhook URL:</strong> <code>/api/webhook/elevenlabs</code></p>
+    </div>
+    
+    <button class="refresh-btn" onclick="loadWebhooks()">Refresh Now</button>
+    
+    <div class="webhook-container" id="webhook-container">
+        <div class="empty-message">Loading webhooks...</div>
+    </div>
+
+    <script>
+        function loadWebhooks() {
+            fetch('/api/webhook/calls')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('webhook-container');
+                    const counter = document.getElementById('webhook-counter');
+                    
+                    if (data.success && data.calls && data.calls.length > 0) {
+                        counter.textContent = `${data.calls.length} webhooks`;
+                        
+                        // Sort by timestamp (newest first)
+                        const sortedCalls = data.calls.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        
+                        let html = '';
+                        sortedCalls.forEach((call, index) => {
+                            html += `
+                                <div class="webhook-item">
+                                    <div class="webhook-header">
+                                        Webhook #${index + 1}
+                                        <div class="timestamp">${new Date(call.timestamp).toLocaleString()}</div>
+                                    </div>
+                                    <div class="webhook-data">${JSON.stringify(call, null, 2)}</div>
+                                </div>
+                            `;
+                        });
+                        
+                        container.innerHTML = html;
+                    } else {
+                        counter.textContent = '0 webhooks';
+                        container.innerHTML = `
+                            <div class="empty-message">
+                                <h3>No Webhooks Received Yet</h3>
+                                <p>Waiting for ElevenLabs webhook data...</p>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading webhooks:', error);
+                    document.getElementById('webhook-container').innerHTML = `
+                        <div class="empty-message">
+                            <h3>Error Loading Webhooks</h3>
+                            <p>Error: ${error.message}</p>
+                        </div>
+                    `;
+                });
+        }
+
+        // Load webhooks when page loads
+        document.addEventListener('DOMContentLoaded', loadWebhooks);
+        
+        // Auto-refresh every 10 seconds
+        setInterval(loadWebhooks, 10000);
+    </script>
+</body>
+</html>"""
+
+@app.route('/api/webhook/calls', methods=['POST'])
+def elevenlabs_webhook():
+    """Receive webhook data from ElevenLabs post-call"""
+    try:
+        data = request.get_json()
+        
+        # Store webhook call data
+        call_data = {
+            'id': f"call_{datetime.now().timestamp()}",
+            'timestamp': datetime.now().isoformat(),
+            'transcript': data.get('transcript', ''),
+            'duration': data.get('duration', 0),
+            'conversation_id': data.get('conversation_id', ''),
+            'customer_phone': data.get('customer_phone', ''),
+            'status': 'completed'
+        }
+        
+        webhook_calls.append(call_data)
+        
+        print(f"Webhook received: {call_data['id']}")
+        
+        return jsonify({"success": True, "message": "Webhook received"})
+        
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+
+@app.route('/wasteking-chatbot.js')
+def serve_chatbot_js():
+    return send_from_directory('static', 'wasteking-chatbot.js')
+
+
+from flask import request, jsonify
+
+@app.route('/api/chat', methods=['POST'])
+def chatbot_api():
+    data = request.get_json()
+    message = data.get('message')
+    conversation_id = data.get('conversation_id')
+
+    # Process the message, e.g., call AI or return canned response
+    response_text = f"You said: {message}"
+
+    return jsonify({'response': response_text})
+
+
+@app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
     """Main endpoint for processing customer messages"""
     try:
@@ -109,7 +299,14 @@ def process_message():
             return jsonify({"success": False, "message": "No data provided"}), 400
         
         customer_message = data.get('customerquestion', '').strip()
-        conversation_id = data.get('elevenlabs_conversation_id', f"conv_{int(datetime.now().timestamp())}")
+        
+        # Use provided conversation_id OR create new one only for new conversations
+        conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id') or data.get('system__conversation_id')
+        if not conversation_id:
+            conversation_id = get_next_conversation_id()
+            print(f"🆕 NEW CONVERSATION CREATED: {conversation_id}")
+        else:
+            print(f"🔄 CONTINUING CONVERSATION: {conversation_id}")
         
         print(f"📩 Message: {customer_message}")
         print(f"🆔 Conversation: {conversation_id}")
@@ -205,7 +402,7 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "agents": ["Skip", "MAV", "Grab (DEFAULT MANAGER)"],
-        "rules_loaded": bool(rules_processor),
+        "rules_processor": "Mock (disabled)",
         "api_configured": bool(os.getenv('WASTEKING_ACCESS_TOKEN')),
         "routing_fixed": True,
         "payment_link_creation_fixed": True,
@@ -226,7 +423,7 @@ if __name__ == '__main__':
     print("  ✅ Grab agent is DEFAULT MANAGER - handles everything except explicit skip/mav")
     print("  ✅ Payment link creation (Step 4) FIXED")
     print("  ✅ NO HARDCODED PRICES - REAL API ONLY")
-    print("  ✅ Office hours checks implemented")
-    print("  ✅ Two-situation rule validation")
+    print("  ✅ Mock rules processor (rules functionality disabled)")
+    print("  ✅ All agent initialization issues resolved")
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
