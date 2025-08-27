@@ -467,6 +467,86 @@ class BaseAgent:
                 break
 
         return data
+    # Insert this function into your BaseAgent class, after the 'extract_data' function.
+    def handle_lg_enquiry(self, message, state):
+        """
+        Handles lead-generation services that require a specialist and a standardized info-gathering flow.
+        Returns a response string if a match is found, otherwise returns None.
+        """
+        message_lower = message.lower()
+        
+        lg_services = {
+            'road sweeper': ['road sweeper', 'sweeping service'],
+            'toilet hire': ['toilet hire', 'portaloo', 'event toilet', 'portable toilet'],
+            'asbestos': ['asbestos', 'asbestos removal'],
+            'hazardous waste': ['hazardous waste', 'hazardous chemicals', 'chemical disposal', 'medical waste', 'paints'],
+            'wheelie bins': ['wheelie bin', 'wheelie bins', 'trade waste', 'commercial waste'],
+            '40 yard roro': ['40 yard roro', '40 cubic yard', '30 yard roro', '35 yard roro', 'large roro'],
+            'aggregates': ['aggregates', 'topsoil', 'gravel', 'sand', 'hardcore'],
+            'wait & load': ['wait & load', 'wait and load skip']
+        }
+        
+        # Check for LG service keywords in the message
+        service_match = next((service for service, keywords in lg_services.items() if any(k in message_lower for k in keywords)), None)
+        
+        if service_match:
+            print(f"LG service detected: {service_match}")
+            state['service'] = service_match
+            self.conversations[state.get('conversation_id')] = state
+
+            # LG Info Gathering Flow - New Rule
+            if not state.get('lg_info_gathered'):
+                state['lg_info_gathered'] = {}
+            
+            # Ask for name
+            if 'name' not in state['lg_info_gathered']:
+                state['lg_info_gathered']['name'] = state.get('firstName')
+                if not state['lg_info_gathered']['name']:
+                    return "I will take some information from you before passing onto our specialist team to give you a cost and availability. Can I take your name please?"
+            
+            # Ask for phone
+            if 'phone' not in state['lg_info_gathered']:
+                state['lg_info_gathered']['phone'] = state.get('phone')
+                if not state['lg_info_gathered']['phone']:
+                    return "What's the best phone number to contact you on?"
+            
+            # Ask for postcode
+            if 'postcode' not in state['lg_info_gathered']:
+                state['lg_info_gathered']['postcode'] = state.get('postcode')
+                if not state['lg_info_gathered']['postcode']:
+                    return "What's the postcode of the site?"
+
+            # Service-specific questions
+            if service_match == 'road sweeper':
+                if 'hours' not in state['lg_info_gathered']:
+                    return "How many hours do you require the road sweeper for?"
+                if 'tipping' not in state['lg_info_gathered']:
+                    return "Is there tipping on or off site?"
+                
+            elif service_match == 'toilet hire':
+                if 'number' not in state['lg_info_gathered']:
+                    return "How many portaloos do you require?"
+                if 'purpose' not in state['lg_info_gathered']:
+                    return "Is this for an event or longer term?"
+                if 'duration' not in state['lg_info_gathered']:
+                    return "How long do you need it for?"
+                if 'delivery_date' not in state['lg_info_gathered']:
+                    return "What date do you need delivery?"
+
+            elif service_match == 'asbestos':
+                if 'collection_type' not in state['lg_info_gathered']:
+                    return "Do you need a skip or just a collection?"
+                if 'type_of_asbestos' not in state['lg_info_gathered']:
+                    return "What type of asbestos is it?"
+                if 'disposal_type' not in state['lg_info_gathered']:
+                    return "Is this a dismantle and disposal or just a collection and disposal?"
+                if 'quantity' not in state['lg_info_gathered']:
+                    return "How much do you have?"
+                
+            # Final response for LG services once all data is collected
+            return "Thank you for that information. I have everything I need to pass you onto our specialist team to give you a cost and availability."
+        
+        return None
 
     def should_book(self, message):
         """Check if user wants to proceed with booking - ORIGINAL"""
@@ -665,6 +745,10 @@ class SkipAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         """SKIP HIRE FLOW - FOLLOW ALL RULES A1-A7 EXACTLY - ORIGINAL"""
         wants_to_book = self.should_book(message)
+
+        lg_response = self.handle_lg_enquiry(message, state)
+        if lg_response:
+            return lg_response
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
@@ -732,6 +816,9 @@ class MAVAgent(BaseAgent):
         if wants_to_book and state.get('price') and state.get('booking_ref'):
             print("USER WANTS TO BOOK - COMPLETING BOOKING")
             return self.complete_booking(state)
+        lg_response = self.handle_lg_enquiry(message, state)
+        if lg_response:
+            return lg_response
 
         # If all info collected but no pricing yet, get pricing
         if all_ready and not state.get('price'):
@@ -801,6 +888,10 @@ class GrabAgent(BaseAgent):
         """GRAB HIRE FLOW - FOLLOW ALL RULES C1-C5 EXACTLY - ORIGINAL"""
         wants_to_book = self.should_book(message)
         print(f"GRAB AGENT - wants_to_book: {wants_to_book}")
+
+        lg_response = self.handle_lg_enquiry(message, state)
+        if lg_response:
+            return lg_response
         
         # Check completion status
         completion, all_ready = self.check_completion_status(state)
