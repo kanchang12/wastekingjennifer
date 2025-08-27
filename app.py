@@ -226,7 +226,7 @@ def is_office_hours():
     return False  # Sunday closed
 
 def route_to_agent(message, conversation_id):
-    """ENHANCED ROUTING WITH QUALIFYING AGENT FOR NON-STANDARD SERVICES"""
+    """ENHANCED ROUTING WITH PROPER EMAIL AND SUPPLIER CALLING"""
     message_lower = message.lower()
     
     print(f"🔍 ROUTING ANALYSIS: '{message_lower}'")
@@ -254,131 +254,62 @@ def route_to_agent(message, conversation_id):
     
     if any(trigger in message_lower for trigger in transfer_triggers):
         print("🔄 TRANSFER REQUESTED")
+        # Send email for transfer
+        customer_data = shared_conversations.get(conversation_id, {})
+        send_callback_to_make(conversation_id, customer_data, "transfer_request")
         return transfer_call_to_supplier(conversation_id)
+    
+    # Route to appropriate agent and handle response
+    response = ""
+    agent_type = ""
     
     # PRIORITY 1: Skip Agent - ONLY explicit skip mentions
     if any(word in message_lower for word in ['skip', 'skip hire', 'yard skip', 'cubic yard']):
         print("🔄 Routing to Skip Agent (explicit skip mention)")
         response = skip_agent.process_message(message, conversation_id)
+        agent_type = "skip"
         
-        # NEW: Track agent response and check for out-of-office callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'skip'
-        })
-        
-        # Check if response mentions callback and send to make.com
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow',
-            'team call you back', 'our team will contact', 'call you first thing'
-        ]):
+        # CALL SUPPLIER FOR SKIP HIRE DURING OFFICE HOURS ONLY
+        if context.get('service') == 'skip' and is_office_hours():
             customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+            if customer_data.get('postcode') and customer_data.get('firstName'):
+                print("📞 CALLING SUPPLIER FOR SKIP HIRE - OFFICE HOURS")
+                supplier_enquiry(f"Skip hire request from {customer_data.get('firstName')} at {customer_data.get('postcode')}", conversation_id, customer_data.get('price', '0'))
     
     # PRIORITY 2: MAV Agent - ONLY explicit man and van mentions  
     elif any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'small van', 'medium van', 'large van']):
         print("🔄 Routing to MAV Agent (explicit mav mention)")
         response = mav_agent.process_message(message, conversation_id)
-        
-        # NEW: Track agent response and check for out-of-office callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'mav'
-        })
-        
-        # Check if response mentions callback and send to make.com
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow',
-            'team call you back', 'our team will contact', 'call you first thing'
-        ]):
-            customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+        agent_type = "mav"
     
     # PRIORITY 3: Grab Agent - explicit grab mentions
     elif any(word in message_lower for word in ['grab', 'grab hire', 'grab lorry', '6 wheeler', '8 wheeler']):
         print("🔄 Routing to Grab Agent (explicit grab mention)")
         response = grab_agent.process_message(message, conversation_id)
-        
-        # NEW: Track agent response and check for out-of-office callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'grab'
-        })
-        
-        # Check if response mentions callback and send to make.com
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow',
-            'team call you back', 'our team will contact', 'call you first thing'
-        ]):
-            customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+        agent_type = "grab"
     
     # PRIORITY 4: Continue with existing service if available
     elif existing_service == 'skip':
         print("🔄 Routing to Skip Agent (continuing existing skip conversation)")
         response = skip_agent.process_message(message, conversation_id)
+        agent_type = "skip"
         
-        # NEW: Track and check for callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'skip'
-        })
-        
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow'
-        ]):
+        # CALL SUPPLIER FOR SKIP HIRE DURING OFFICE HOURS ONLY
+        if is_office_hours():
             customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+            if customer_data.get('postcode') and customer_data.get('firstName'):
+                print("📞 CALLING SUPPLIER FOR SKIP HIRE - OFFICE HOURS")
+                supplier_enquiry(f"Skip hire request from {customer_data.get('firstName')} at {customer_data.get('postcode')}", conversation_id, customer_data.get('price', '0'))
     
     elif existing_service == 'mav':
         print("🔄 Routing to MAV Agent (continuing existing mav conversation)")
         response = mav_agent.process_message(message, conversation_id)
-        
-        # NEW: Track and check for callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'mav'
-        })
-        
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow'
-        ]):
-            customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+        agent_type = "mav"
         
     elif existing_service == 'grab':
         print("🔄 Routing to Grab Agent (continuing existing grab conversation)")
         response = grab_agent.process_message(message, conversation_id)
-        
-        # NEW: Track and check for callbacks
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'grab'
-        })
-        
-        if any(phrase in response.lower() for phrase in [
-            'call you back', 'callback', 'team will call', 'call back tomorrow'
-        ]):
-            customer_data = shared_conversations.get(conversation_id, {})
-            send_callback_to_make(conversation_id, customer_data, "out_of_office_callback")
-        
-        return response
+        agent_type = "grab"
         
     elif existing_service == 'qualifying':
         pass
@@ -387,15 +318,40 @@ def route_to_agent(message, conversation_id):
     else:
         print("🔄 Routing to Qualifying Agent (handles all other requests and unknown services)")
         response = "I can help you with skip hire, man & van services, and grab lorry services. What type of waste removal service do you need?"
-        
-        # NEW: Track response
-        conversations_by_id[conversation_id]['agent_responses'].append({
-            'timestamp': datetime.now().isoformat(),
-            'response': response,
-            'agent_type': 'qualifying'
-        })
-        
-        return response
+        agent_type = "qualifying"
+
+    # NEW: Track agent response
+    conversations_by_id[conversation_id]['agent_responses'].append({
+        'timestamp': datetime.now().isoformat(),
+        'response': response,
+        'agent_type': agent_type
+    })
+    
+    # CHECK FOR TRANSFERS AND CALLBACKS - SEND EMAILS
+    callback_phrases = [
+        'call you back', 'callback', 'team will call', 'call back tomorrow',
+        'team call you back', 'our team will contact', 'call you first thing',
+        'have our team call', 'specialist team call', 'director call you back'
+    ]
+    
+    transfer_phrases = [
+        'transfer you', 'put you through', 'connect you', 'transfer to',
+        'speak to our team', 'let me put you through', 'transfer call'
+    ]
+    
+    customer_data = shared_conversations.get(conversation_id, {})
+    
+    # Send email for callbacks
+    if any(phrase in response.lower() for phrase in callback_phrases):
+        print("📧 CALLBACK DETECTED - SENDING EMAIL")
+        send_callback_to_make(conversation_id, customer_data, "callback_request")
+    
+    # Send email for transfers
+    if any(phrase in response.lower() for phrase in transfer_phrases):
+        print("📧 TRANSFER DETECTED - SENDING EMAIL")
+        send_callback_to_make(conversation_id, customer_data, "transfer_request")
+    
+    return response
 
 @app.route('/')
 def index():
@@ -777,12 +733,60 @@ def index():
     </div>
 
     <script>
-        // Auto-refresh every 30 seconds
-        setTimeout(() => {
-            window.location.reload();
-        }, 30000);
+        let isUpdating = false;
+        let lastUpdateTime = new Date().getTime();
         
-        console.log('Enhanced dashboard loaded - tracking {{ conversation_count }} conversations');
+        // Real-time polling every 2 seconds
+        async function fetchLiveUpdates() {
+            if (isUpdating) return;
+            
+            try {
+                isUpdating = true;
+                const response = await fetch('/api/conversations?timestamp=' + lastUpdateTime);
+                const data = await response.json();
+                
+                if (data.success && data.conversations.length > 0) {
+                    // Check if there are new updates
+                    const hasNewData = data.conversations.some(conv => 
+                        new Date(conv.last_activity).getTime() > lastUpdateTime
+                    );
+                    
+                    if (hasNewData) {
+                        console.log('New conversation data detected - refreshing...');
+                        window.location.reload();
+                    }
+                }
+                
+                lastUpdateTime = new Date().getTime();
+            } catch (error) {
+                console.error('Update error:', error);
+            } finally {
+                isUpdating = false;
+            }
+        }
+        
+        // Start real-time updates every 2 seconds
+        setInterval(fetchLiveUpdates, 2000);
+        
+        // Also refresh every 10 seconds as backup
+        setInterval(() => {
+            window.location.reload();
+        }, 10000);
+        
+        // Visual indicator for live updates
+        const header = document.querySelector('.header h1');
+        if (header) {
+            const liveIndicator = document.createElement('span');
+            liveIndicator.innerHTML = ' <span style="color: #48bb78; font-size: 0.8rem;">● LIVE</span>';
+            header.appendChild(liveIndicator);
+            
+            // Blink the live indicator
+            setInterval(() => {
+                liveIndicator.style.opacity = liveIndicator.style.opacity === '0.5' ? '1' : '0.5';
+            }, 1000);
+        }
+        
+        console.log('Real-time dashboard loaded - tracking {{ conversation_count }} conversations');
     </script>
 </body>
 </html>"""
@@ -878,11 +882,13 @@ def get_webhook_calls():
         error_response.headers['Content-Type'] = 'application/json'
         return error_response, 500
 
-# NEW: API endpoint to get conversations data
+# NEW: API endpoint to get conversations data with timestamp filtering
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
-    """Get all conversation data organized by conversation ID"""
+    """Get all conversation data organized by conversation ID with real-time filtering"""
     try:
+        timestamp_filter = request.args.get('timestamp')
+        
         conversation_list = []
         for conv_id, conv_data in conversations_by_id.items():
             # Include customer data from shared_conversations
@@ -901,12 +907,24 @@ def get_conversations():
                     'postcode': customer_info.get('postcode', ''),
                     'service': customer_info.get('service', ''),
                     'waste_type': customer_info.get('waste_type', ''),
-                    'price': customer_info.get('price', '')
+                    'price': customer_info.get('price', ''),
+                    'supplements': customer_info.get('supplements', [])  # NEW: Include supplements
                 },
                 'messages': conv_data['messages'],
                 'agent_responses': conv_data['agent_responses'],
                 'calls': conv_data['calls']
             }
+            
+            # Filter by timestamp if provided
+            if timestamp_filter:
+                try:
+                    filter_time = float(timestamp_filter) / 1000  # Convert JS timestamp to seconds
+                    last_activity_time = datetime.fromisoformat(conv_data['last_activity']).timestamp()
+                    if last_activity_time <= filter_time:
+                        continue  # Skip this conversation as it hasn't been updated
+                except:
+                    pass  # If timestamp parsing fails, include all conversations
+            
             conversation_list.append(conv_summary)
         
         # Sort by last activity
@@ -915,7 +933,8 @@ def get_conversations():
         return jsonify({
             "success": True,
             "conversations": conversation_list,
-            "total_count": len(conversation_list)
+            "total_count": len(conversation_list),
+            "timestamp": datetime.now().isoformat()
         })
         
     except Exception as e:
