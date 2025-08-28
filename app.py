@@ -343,7 +343,6 @@ class DashboardManager:
             return round(duration)
         return 0
     
-    # Fix 1: Update the DashboardManager to send webhooks on every call update
     def update_call(self, conversation_id, data):
         self.start_call(conversation_id)
         
@@ -365,14 +364,6 @@ class DashboardManager:
         
         if existing_call != merged_data:
             self.live_calls[conversation_id] = merged_data
-            
-            # Send webhook for every significant update that has customer data
-            if merged_data.get('collected_data') and (
-                merged_data.get('collected_data').get('firstName') or 
-                merged_data.get('collected_data').get('phone') or 
-                merged_data.get('collected_data').get('postcode')
-            ):
-                send_webhook(conversation_id, merged_data, 'conversation_update')
     
     def get_call_by_id(self, conversation_id):
         """Get specific call data by ID"""
@@ -456,14 +447,12 @@ class BaseAgent:
             return {'response': TRANSFER_RULES['management_director']['out_of_hours'], 'stage': 'transfer_completed', 'reason': 'director_request'}
         if any(complaint in message_lower for complaint in TRANSFER_RULES['complaints']['triggers']):
             return {'response': TRANSFER_RULES['complaints']['out_of_hours'], 'stage': 'transfer_completed', 'reason': 'complaint'}
-        
         for service_type, config in LG_SERVICES.items():
             if any(trigger in message_lower for trigger in config['triggers']):
-                print(f"DETECTED LG SERVICE: {service_type} with triggers {config['triggers']}")  # Debug
                 if service_type == 'waste_bags':
                     return {'response': LG_SERVICES['waste_bags']['scripts']['info'], 'stage': 'info_provided', 'reason': 'waste_bags'}
                 return {'response': config['scripts']['transfer'], 'stage': 'transfer_completed', 'reason': f'lg_service_{service_type}'}
-    
+
         if any(term in message_lower for term in ['depot close by', 'local to me', 'near me']):
             return {'response': CONVERSATION_STANDARDS['location_response'], 'stage': 'info_provided', 'reason': 'location_query'}
         if any(term in message_lower for term in ['speak to human', 'talk to person', 'human agent']):
@@ -854,13 +843,11 @@ def user_dashboard_page():
         body { font-family: Arial, sans-serif; background: #f5f6fa; }
         .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 25px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
         .header h1 { font-size: 28px; margin-bottom: 10px; }
-        .stats { display: flex; gap: 30px; margin-top: 15px; font-size: 14px; align-items: center; }
+        .stats { display: flex; gap: 30px; margin-top: 15px; font-size: 14px; }
         .live-dot { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; animation: pulse 2s infinite; }
-        .main { padding: 20px; margin-top: 120px; }
-        .filters { background: white; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .filter-dropdown { padding: 10px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 16px; min-width: 200px; }
-        .calls-section { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .calls-list { max-height: calc(100vh - 300px); overflow-y: auto; }
+        .main { display: grid; grid-template-columns: 1fr 400px; gap: 20px; padding: 20px; margin-top: 120px; }
+        .calls-section, .form-section { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .calls-list { max-height: calc(100vh - 250px); overflow-y: auto; }
         .call-item { 
             background: #f8f9fa; 
             border-radius: 10px; 
@@ -876,13 +863,18 @@ def user_dashboard_page():
             transform: translateY(-2px); 
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
+        .call-item.selected { 
+            background: #e3f2fd !important; 
+            border: 2px solid #2196f3 !important;
+            transform: translateY(-2px);
+        }
         .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .call-id { font-weight: bold; color: #667eea; font-size: 16px; }
         .call-status { display: flex; align-items: center; gap: 8px; }
         .stage { 
-            padding: 6px 12px; 
+            padding: 4px 12px; 
             border-radius: 20px; 
-            font-size: 12px; 
+            font-size: 11px; 
             font-weight: bold; 
             text-transform: uppercase;
             white-space: nowrap;
@@ -903,16 +895,36 @@ def user_dashboard_page():
         }
         .call-details { margin: 10px 0; }
         .call-details div { margin: 4px 0; font-size: 14px; }
-        .transcript-preview { 
+        .transcript { 
             background: white; 
             padding: 12px; 
             border-radius: 8px; 
-            max-height: 60px; 
-            overflow: hidden; 
-            font-size: 14px; 
+            max-height: 80px; 
+            overflow-y: auto; 
+            font-size: 12px; 
             margin-top: 10px;
             border: 1px solid #e0e0e0;
-            color: #666;
+        }
+        .form-section { position: sticky; top: 140px; }
+        .form-group { margin-bottom: 15px; }
+        .form-label { 
+            display: block; 
+            margin-bottom: 5px; 
+            font-weight: bold; 
+            font-size: 14px; 
+            color: #333;
+        }
+        .form-input { 
+            width: 100%; 
+            padding: 10px; 
+            border: 2px solid #e9ecef; 
+            border-radius: 8px;
+            font-size: 14px;
+            background: #f8f9fa;
+        }
+        .form-input.filled { 
+            background: #e8f5e8 !important; 
+            border-color: #4caf50 !important; 
         }
         .no-calls { text-align: center; padding: 60px; color: #666; }
         .refresh-indicator { 
@@ -937,62 +949,6 @@ def user_dashboard_page():
             border-radius: 50%;
             animation: pulse 2s infinite;
         }
-        
-        /* Modal Styles */
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
-        .modal-content { 
-            background-color: white; 
-            margin: 2% auto; 
-            padding: 30px; 
-            border-radius: 15px; 
-            width: 90%; 
-            max-width: 800px; 
-            max-height: 90vh; 
-            overflow-y: auto;
-            position: relative;
-        }
-        .close { 
-            color: #aaa; 
-            float: right; 
-            font-size: 28px; 
-            font-weight: bold; 
-            cursor: pointer;
-            position: absolute;
-            right: 20px;
-            top: 15px;
-        }
-        .close:hover { color: black; }
-        .modal-header { border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; margin-bottom: 20px; }
-        .modal-body { }
-        .detail-row { 
-            display: grid; 
-            grid-template-columns: 150px 1fr; 
-            gap: 15px; 
-            margin: 15px 0; 
-            padding: 10px 0;
-            border-bottom: 1px solid #f0f0f0;
-        }
-        .detail-label { font-weight: bold; color: #333; }
-        .detail-value { 
-            background: #f8f9fa; 
-            padding: 8px 12px; 
-            border-radius: 6px; 
-            border: 1px solid #e9ecef;
-        }
-        .detail-value.filled { background: #e8f5e8; border-color: #4caf50; }
-        .transcript-full { 
-            background: #f8f9fa; 
-            border: 1px solid #e9ecef; 
-            border-radius: 8px; 
-            padding: 15px; 
-            font-size: 16px; 
-            line-height: 1.6; 
-            max-height: 300px; 
-            overflow-y: auto;
-            white-space: pre-wrap;
-            font-family: 'Courier New', monospace;
-        }
-        
         @keyframes pulse { 
             0% { opacity: 1; transform: scale(1); } 
             50% { opacity: 0.5; transform: scale(1.2); } 
@@ -1015,19 +971,6 @@ def user_dashboard_page():
     </div>
     
     <div class="main">
-        <div class="filters">
-            <label for="service-filter" style="margin-right: 15px; font-weight: bold;">Filter by Service:</label>
-            <select id="service-filter" class="filter-dropdown" onchange="filterCalls()">
-                <option value="all">All Services</option>
-                <option value="skip">Skip Hire</option>
-                <option value="mav">Man & Van</option>
-                <option value="grab">Grab Hire</option>
-                <option value="complaint">Complaints</option>
-                <option value="transfer">Transfers</option>
-                <option value="other">Others</option>
-            </select>
-        </div>
-        
         <div class="calls-section">
             <h2 class="section-title">Live Conversations</h2>
             <div class="calls-list">
@@ -1040,70 +983,69 @@ def user_dashboard_page():
                 </div>
             </div>
         </div>
-    </div>
-
-    <!-- Modal -->
-    <div id="callModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <div class="modal-header">
-                <h2 id="modal-title">Call Details</h2>
+        
+        <div class="form-section">
+            <h2 class="section-title">Call Details</h2>
+            <div id="no-selection" style="text-align: center; color: #666; padding: 40px;">
+                <div style="font-size: 32px; margin-bottom: 15px;">👈</div>
+                <p>Click on a call to view details</p>
             </div>
-            <div class="modal-body">
-                <div class="detail-row">
-                    <div class="detail-label">Call ID:</div>
-                    <div class="detail-value" id="modal-call-id"></div>
+            <div id="call-details-form" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Call ID</label>
+                    <input type="text" class="form-input" id="call-id" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Customer Name:</div>
-                    <div class="detail-value" id="modal-customer-name"></div>
+                <div class="form-group">
+                    <label class="form-label">Customer Name</label>
+                    <input type="text" class="form-input" id="customer-name" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Phone Number:</div>
-                    <div class="detail-value" id="modal-customer-phone"></div>
+                <div class="form-group">
+                    <label class="form-label">Phone Number</label>
+                    <input type="text" class="form-input" id="customer-phone" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Postcode:</div>
-                    <div class="detail-value" id="modal-customer-postcode"></div>
+                <div class="form-group">
+                    <label class="form-label">Postcode</label>
+                    <input type="text" class="form-input" id="customer-postcode" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Service Type:</div>
-                    <div class="detail-value" id="modal-service-type"></div>
+                <div class="form-group">
+                    <label class="form-label">Service Type</label>
+                    <input type="text" class="form-input" id="service-type" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Current Stage:</div>
-                    <div class="detail-value" id="modal-current-stage"></div>
+                <div class="form-group">
+                    <label class="form-label">Current Stage</label>
+                    <input type="text" class="form-input" id="current-stage" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Price Quote:</div>
-                    <div class="detail-value" id="modal-price-quote"></div>
+                <div class="form-group">
+                    <label class="form-label">Price Quote</label>
+                    <input type="text" class="form-input" id="price-quote" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Call Duration:</div>
-                    <div class="detail-value" id="modal-call-duration"></div>
+                <div class="form-group">
+                    <label class="form-label">Call Duration</label>
+                    <input type="text" class="form-input" id="call-duration" readonly>
                 </div>
-                <div class="detail-row">
-                    <div class="detail-label">Booking Reference:</div>
-                    <div class="detail-value" id="modal-booking-ref"></div>
+                <div class="form-group">
+                    <label class="form-label">Booking Reference</label>
+                    <input type="text" class="form-input" id="booking-ref" readonly>
                 </div>
-                <div class="detail-row" style="grid-template-columns: 1fr;">
-                    <div class="detail-label" style="margin-bottom: 10px;">Full Transcript:</div>
-                    <div class="transcript-full" id="modal-full-transcript">No transcript available</div>
+                <div class="form-group">
+                    <label class="form-label">Full Transcript</label>
+                    <textarea class="form-input" id="full-transcript" readonly style="height: 200px; resize: vertical;"></textarea>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        let allCalls = new Map();
+        let allCalls = new Map(); // Store all calls by ID for stability
+        let selectedCallId = null;
         let isLoading = false;
-        let currentFilter = 'all';
+        let refreshCount = 0;
 
         function showLoading() {
             const loading = document.getElementById('loading');
             if (loading) loading.style.display = 'inline-block';
         }
-
+        
         function hideLoading() {
             const loading = document.getElementById('loading');
             if (loading) loading.style.display = 'none';
@@ -1112,33 +1054,48 @@ def user_dashboard_page():
         function loadDashboard() {
             if (isLoading) return;
             isLoading = true;
+            refreshCount++;
             showLoading();
             
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Update data store
-                        allCalls.clear();
+                        // Update our stable call storage
                         data.data.live_calls.forEach(call => {
                             allCalls.set(call.id, call);
                         });
                         
                         updateCallsDisplay();
                         
-                        // Update stats
-                        document.getElementById('active-calls').textContent = `${data.data.active_calls} Active Calls`;
-                        document.getElementById('total-calls').textContent = data.data.total_calls;
-                        document.getElementById('last-update').innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
+                        // Update header stats without causing flicker
+                        const activeCallsEl = document.getElementById('active-calls');
+                        const totalCallsEl = document.getElementById('total-calls');
+                        const lastUpdateEl = document.getElementById('last-update');
+                        
+                        if (activeCallsEl) activeCallsEl.textContent = `${data.data.active_calls} Active Calls`;
+                        if (totalCallsEl) totalCallsEl.textContent = data.data.total_calls;
+                        if (lastUpdateEl) {
+                            lastUpdateEl.innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
+                        }
+                        
+                        // Refresh selected call details if one is selected
+                        if (selectedCallId && allCalls.has(selectedCallId)) {
+                            updateCallDetails(allCalls.get(selectedCallId));
+                        }
                     }
                 })
-                .catch(error => console.error('Dashboard error:', error))
+                .catch(error => {
+                    console.error('Dashboard error:', error);
+                    const lastUpdateEl = document.getElementById('last-update');
+                    if (lastUpdateEl) lastUpdateEl.textContent = `Update failed (${refreshCount})`;
+                })
                 .finally(() => {
                     isLoading = false;
                     hideLoading();
                 });
         }
-
+        
         function updateCallsDisplay() {
             const container = document.getElementById('calls-container');
             if (!container) return;
@@ -1147,30 +1104,33 @@ def user_dashboard_page():
                 new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
             );
 
-            const filteredCalls = filterCallsByService(calls);
-
-            if (filteredCalls.length === 0) {
+            if (calls.length === 0) {
                 container.innerHTML = `
                     <div class="no-calls">
                         <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        <h3>No calls found</h3>
-                        <p style="margin-top: 10px; color: #999;">Waiting for calls...</p>
+                        <h3>Waiting for live calls...</h3>
+                        <p style="margin-top: 10px; color: #999;">Dashboard will update automatically when calls come in</p>
                     </div>`;
                 return;
             }
 
-            // Simple rebuild - works reliably
+            // Clear and rebuild - more stable than trying to update in place
             container.innerHTML = '';
-            filteredCalls.forEach(call => {
+            
+            calls.forEach(call => {
                 const callEl = createCallElement(call);
                 container.appendChild(callEl);
             });
         }
-
+        
         function createCallElement(call) {
             const callEl = document.createElement('div');
             callEl.className = "call-item";
             callEl.id = `call-${call.id}`;
+            
+            if (selectedCallId === call.id) {
+                callEl.classList.add('selected');
+            }
             
             const collected_data = call.collected_data || {};
             const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
@@ -1197,84 +1157,109 @@ def user_dashboard_page():
                     ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
                     ${call.booking_ref ? `<div><strong>Booking:</strong> ${call.booking_ref}</div>` : ''}
                 </div>
-                <div class="transcript-preview">${last_message}</div>
+                <div class="transcript">${last_message}</div>
                 <div style="font-size: 11px; color: #666; margin-top: 10px; text-align: right;">
                     Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
                 </div>
             `;
             
-            callEl.addEventListener('click', () => openModal(call));
+            // Add click handler
+            callEl.addEventListener('click', () => selectCall(call.id));
+            
             return callEl;
         }
-
-        function filterCallsByService(calls) {
-            if (currentFilter === 'all') return calls;
+        
+        function selectCall(callId) {
+            // Update selected state visually
+            document.querySelectorAll('.call-item').forEach(el => el.classList.remove('selected'));
+            const selectedElement = document.getElementById(`call-${callId}`);
+            if (selectedElement) {
+                selectedElement.classList.add('selected');
+                selectedElement.scrollIntoView({ 
+                    behavior: 'smooth', 
+                    block: 'nearest',
+                    inline: 'nearest'
+                });
+            }
             
-            return calls.filter(call => {
-                const service = call.collected_data?.service || '';
-                const stage = call.stage || '';
+            selectedCallId = callId;
+            
+            // Get call data and update form
+            const callData = allCalls.get(callId);
+            if (callData) {
+                updateCallDetails(callData);
                 
-                switch(currentFilter) {
-                    case 'skip': return service === 'skip';
-                    case 'mav': return service === 'mav';
-                    case 'grab': return service === 'grab';
-                    case 'complaint': return stage.includes('complaint') || stage.includes('transfer');
-                    case 'transfer': return stage.includes('transfer');
-                    case 'other': return !['skip', 'mav', 'grab'].includes(service);
-                    default: return true;
+                // Show form and hide no-selection message
+                const noSelection = document.getElementById('no-selection');
+                const form = document.getElementById('call-details-form');
+                if (noSelection) noSelection.style.display = 'none';
+                if (form) form.style.display = 'block';
+            }
+        }
+        
+        function updateCallDetails(callData) {
+            if (!callData) return;
+            
+            const collected = callData.collected_data || {};
+            
+            const formFields = {
+                'call-id': callData.id || '',
+                'customer-name': collected.firstName || '',
+                'customer-phone': collected.phone || '',
+                'customer-postcode': collected.postcode || '',
+                'service-type': collected.service || '',
+                'current-stage': callData.stage || '',
+                'price-quote': callData.price || '',
+                'call-duration': `${callData.duration || 0} minutes`,
+                'booking-ref': callData.booking_ref || '',
+                'full-transcript': (callData.history || []).join('\\n\\n') || 'No transcript available'
+            };
+            
+            Object.entries(formFields).forEach(([fieldId, value]) => {
+                const input = document.getElementById(fieldId);
+                if (input) {
+                    input.value = value;
+                    input.classList.toggle('filled', !!value && value.trim() !== '');
                 }
             });
         }
-
-        function filterCalls() {
-            const filterEl = document.getElementById('service-filter');
-            currentFilter = filterEl.value;
-            updateCallsDisplay();
-        }
-
-        function openModal(call) {
-            const modal = document.getElementById('callModal');
-            const collected = call.collected_data || {};
-            
-            document.getElementById('modal-title').textContent = `Call Details - ${call.id}`;
-            document.getElementById('modal-call-id').textContent = call.id || '';
-            document.getElementById('modal-customer-name').textContent = collected.firstName || 'Not provided';
-            document.getElementById('modal-customer-phone').textContent = collected.phone || 'Not provided';
-            document.getElementById('modal-customer-postcode').textContent = collected.postcode || 'Not provided';
-            document.getElementById('modal-service-type').textContent = collected.service || 'Not identified';
-            document.getElementById('modal-current-stage').textContent = call.stage || 'Unknown';
-            document.getElementById('modal-price-quote').textContent = call.price || 'Not quoted';
-            document.getElementById('modal-call-duration').textContent = `${call.duration || 0} minutes`;
-            document.getElementById('modal-booking-ref').textContent = call.booking_ref || 'Not assigned';
-            document.getElementById('modal-full-transcript').textContent = (call.history || []).join('\\n\\n') || 'No transcript available';
-            
-            document.querySelectorAll('.detail-value').forEach(el => {
-                el.classList.toggle('filled', !!el.textContent && el.textContent.trim() !== '' && !el.textContent.includes('Not'));
-            });
-            
-            modal.style.display = 'block';
-        }
-
-        function closeModal() {
-            document.getElementById('callModal').style.display = 'none';
-        }
-
-        window.onclick = function(event) {
-            const modal = document.getElementById('callModal');
-            if (event.target === modal) {
-                closeModal();
-            }
-        }
-
-        // 2 second refresh - simple and reliable
+        
+        // Initialize dashboard
         document.addEventListener('DOMContentLoaded', () => {
             loadDashboard();
-            setInterval(loadDashboard, 2000);
+            
+            // Refresh every 5 seconds but only if not loading
+            setInterval(() => {
+                if (!isLoading) {
+                    loadDashboard();
+                }
+            }, 500);
+            
+            // Update durations every second for selected call
+            setInterval(() => {
+                if (selectedCallId && allCalls.has(selectedCallId)) {
+                    const call = allCalls.get(selectedCallId);
+                    const durationInput = document.getElementById('call-duration');
+                    if (durationInput && call.timestamp) {
+                        const startTime = new Date(call.timestamp);
+                        const currentDuration = Math.round((new Date() - startTime) / 1000 / 60);
+                        durationInput.value = `${currentDuration} minutes`;
+                        
+                        // Update duration in the call item too
+                        const callElement = document.getElementById(`call-${selectedCallId}`);
+                        if (callElement) {
+                            const durationEl = callElement.querySelector('.duration');
+                            if (durationEl) durationEl.textContent = `${currentDuration}m`;
+                        }
+                    }
+                }
+            }, 1000);
         });
     </script>
 </body>
 </html>
 """)
+
 @app.route('/dashboard/manager')
 def manager_dashboard_page():
     return render_template_string("""
