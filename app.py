@@ -1211,7 +1211,7 @@ def user_dashboard_page():
                 if (!isLoading) {
                     loadDashboard();
                 }
-            }, 5000);
+            }, 500);
             
             // Update durations every second for selected call
             setInterval(() => {
