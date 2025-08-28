@@ -346,13 +346,37 @@ def make_supplier_call(customer_data, service_type):
 
 # --- HELPER FUNCTIONS ---
 def is_business_hours():
-    now = datetime.now()
-    day = now.weekday()
+    """Check if current UK time falls within business hours"""
+    try:
+        import pytz
+        uk_tz = pytz.timezone('Europe/London')
+        now = datetime.now(uk_tz)
+    except ImportError:
+        # Fallback if pytz not available - assume UTC+0 (close to UK time)
+        from datetime import timezone, timedelta
+        uk_offset = timedelta(hours=1)  # Approximate BST offset
+        now = datetime.now(timezone(uk_offset))
+    
+    day = now.weekday()  # Monday=0, Sunday=6
     hour = now.hour + (now.minute / 60.0)
-    if day < 4: return 8 <= hour < 17
-    elif day == 4: return 8 <= hour < 16.5
-    elif day == 5: return 9 <= hour < 12
-    return False
+    
+    print(f"DEBUG: Current UK time: {now.strftime('%A %H:%M')}, Day: {day}, Hour: {hour}")
+    
+    if day < 4:  # Monday-Thursday
+        is_open = 8 <= hour < 17
+        print(f"DEBUG: Monday-Thursday hours (8-17): {is_open}")
+        return is_open
+    elif day == 4:  # Friday
+        is_open = 8 <= hour < 16.5
+        print(f"DEBUG: Friday hours (8-16.5): {is_open}")
+        return is_open
+    elif day == 5:  # Saturday
+        is_open = 9 <= hour < 12
+        print(f"DEBUG: Saturday hours (9-12): {is_open}")
+        return is_open
+    else:  # Sunday
+        print(f"DEBUG: Sunday - closed")
+        return False
 
 def send_webhook(conversation_id, data, reason):
     try:
@@ -1579,8 +1603,16 @@ def user_dashboard_page():
 
     <script>
         let selectedCallId = null;
+        let lastUpdateTime = 0;
 
         function loadDashboard() {
+            const now = Date.now();
+            // Reduce update frequency to prevent flickering - only update every 5 seconds
+            if (now - lastUpdateTime < 5000) {
+                return;
+            }
+            lastUpdateTime = now;
+            
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
@@ -1608,72 +1640,108 @@ def user_dashboard_page():
             const container = document.getElementById('calls-container');
 
             if (!calls || calls.length === 0) {
-                container.innerHTML = `
-                    <div class="no-calls">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        No calls in the last 10 minutes
-                    </div>`;
+                if (!container.querySelector('.no-calls')) {
+                    container.innerHTML = `
+                        <div class="no-calls">
+                            <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
+                            No calls in the last 10 minutes
+                        </div>`;
+                }
                 return;
             }
 
-            // Create a map of existing call elements
+            // Remove no-calls message if it exists
+            const noCallsMsg = container.querySelector('.no-calls');
+            if (noCallsMsg) {
+                noCallsMsg.remove();
+            }
+
+            // Create a map of existing call elements to avoid recreating them
             const existingCalls = new Map();
-            const existingElements = container.querySelectorAll('.call-item');
+            const existingElements = container.querySelectorAll('.call-item[data-call-id]');
             existingElements.forEach(el => {
-                const id = el.id.replace('call-', '');
+                const id = el.getAttribute('data-call-id');
                 existingCalls.set(id, el);
             });
 
+            // Track which calls we've processed
+            const processedCalls = new Set();
+
             // Update or create call elements
-            const updatedCallIds = new Set();
             calls.forEach(call => {
-                updatedCallIds.add(call.id);
+                processedCalls.add(call.id);
                 
                 const collected_data = call.collected_data || {};
                 const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
                 const isSelected = selectedCallId === call.id;
                 
-                const callHTML = `
-                    <div class="call-header">
-                        <div class="call-id">${call.id}</div>
-                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                    </div>
-                    <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                    <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                    <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                    <div class="transcript">${last_message}</div>
-                    <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                        ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                    </div>
-                `;
-
                 if (existingCalls.has(call.id)) {
-                    // Update existing element
+                    // Update existing element content only if needed
                     const existingEl = existingCalls.get(call.id);
-                    existingEl.innerHTML = callHTML;
+                    const currentContent = existingEl.innerHTML;
+                    
+                    const newContent = `
+                        <div class="call-header">
+                            <div class="call-id">${call.id}</div>
+                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+                        </div>
+                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+                        <div class="transcript">${last_message}</div>
+                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                        </div>
+                    `;
+                    
+                    // Only update if content actually changed
+                    if (currentContent !== newContent) {
+                        existingEl.innerHTML = newContent;
+                    }
+                    
+                    // Maintain selection state
                     if (isSelected) {
                         existingEl.style.border = '2px solid #667eea';
                         existingEl.style.backgroundColor = '#e8f0fe';
+                    } else {
+                        existingEl.style.border = 'none';
+                        existingEl.style.backgroundColor = '#f8f9fa';
                     }
                 } else {
-                    // Create new element
+                    // Create new element - add to top of container
                     const newEl = document.createElement('div');
                     newEl.className = "call-item";
-                    newEl.id = `call-${call.id}`;
+                    newEl.setAttribute('data-call-id', call.id);
                     newEl.onclick = () => selectCall(call.id);
-                    newEl.innerHTML = callHTML;
+                    newEl.innerHTML = `
+                        <div class="call-header">
+                            <div class="call-id">${call.id}</div>
+                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+                        </div>
+                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+                        <div class="transcript">${last_message}</div>
+                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                        </div>
+                    `;
+                    
                     if (isSelected) {
                         newEl.style.border = '2px solid #667eea';
                         newEl.style.backgroundColor = '#e8f0fe';
                     }
-                    container.insertBefore(newEl, container.firstChild); // Add to top
+                    
+                    // Add to top of container
+                    container.insertBefore(newEl, container.firstChild);
                 }
             });
 
             // Remove calls that no longer exist
             existingCalls.forEach((element, callId) => {
-                if (!updatedCallIds.has(callId)) {
+                if (!processedCalls.has(callId)) {
                     element.remove();
                 }
             });
@@ -1689,13 +1757,13 @@ def user_dashboard_page():
             });
             
             // Add selection styling
-            const selectedElement = document.getElementById(`call-${callId}`);
+            const selectedElement = document.querySelector(`[data-call-id="${callId}"]`);
             if (selectedElement) {
                 selectedElement.style.border = '2px solid #667eea';
                 selectedElement.style.backgroundColor = '#e8f0fe';
             }
             
-            // Update form with call data
+            // Update form with call data immediately
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
@@ -1720,7 +1788,8 @@ def user_dashboard_page():
                             });
                         }
                     }
-                });
+                })
+                .catch(error => console.error('Error loading call data:', error));
         }
         
         function clearForm() {
@@ -1733,7 +1802,8 @@ def user_dashboard_page():
         }
         
         document.addEventListener('DOMContentLoaded', loadDashboard);
-        setInterval(loadDashboard, 2000);
+        // Reduced refresh frequency from 2 seconds to 5 seconds to prevent flickering
+        setInterval(loadDashboard, 5000);
     </script>
 </body>
 </html>
