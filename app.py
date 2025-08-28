@@ -347,34 +347,35 @@ def make_supplier_call(customer_data, service_type):
 # --- HELPER FUNCTIONS ---
 def is_business_hours():
     """Check if current UK time falls within business hours"""
-    try:
-        import pytz
-        uk_tz = pytz.timezone('Europe/London')
-        now = datetime.now(uk_tz)
-    except ImportError:
-        # Fallback if pytz not available - assume UTC+0 (close to UK time)
-        from datetime import timezone, timedelta
-        uk_offset = timedelta(hours=1)  # Approximate BST offset
-        now = datetime.now(timezone(uk_offset))
+    from datetime import datetime, timezone, timedelta
     
-    day = now.weekday()  # Monday=0, Sunday=6
-    hour = now.hour + (now.minute / 60.0)
+    # UK timezone (UTC+0 in winter, UTC+1 in summer)
+    # For simplicity, assume UTC+0 - this needs to be UTC time
+    utc_now = datetime.now(timezone.utc)
+    # Convert to UK time (rough approximation)
+    uk_now = utc_now + timedelta(hours=0)  # Adjust this based on BST/GMT
     
-    print(f"DEBUG: Current UK time: {now.strftime('%A %H:%M')}, Day: {day}, Hour: {hour}")
+    day = uk_now.weekday()  # Monday=0, Sunday=6
+    hour = uk_now.hour + (uk_now.minute / 60.0)
     
-    if day < 4:  # Monday-Thursday
+    print(f"DEBUG: UTC time: {utc_now.strftime('%A %H:%M')}")
+    print(f"DEBUG: UK time estimate: {uk_now.strftime('%A %H:%M')}")
+    print(f"DEBUG: Day: {day}, Hour: {hour}")
+    
+    # It's 17:30 (5:30 PM) - should be CLOSED
+    if day < 4:  # Monday-Thursday (8-17)
         is_open = 8 <= hour < 17
         print(f"DEBUG: Monday-Thursday hours (8-17): {is_open}")
         return is_open
-    elif day == 4:  # Friday
+    elif day == 4:  # Friday (8-16.5)
         is_open = 8 <= hour < 16.5
         print(f"DEBUG: Friday hours (8-16.5): {is_open}")
         return is_open
-    elif day == 5:  # Saturday
+    elif day == 5:  # Saturday (9-12)
         is_open = 9 <= hour < 12
         print(f"DEBUG: Saturday hours (9-12): {is_open}")
         return is_open
-    else:  # Sunday
+    else:  # Sunday - closed
         print(f"DEBUG: Sunday - closed")
         return False
 
@@ -1192,26 +1193,48 @@ class BaseAgent:
             return "Booking issue occurred. Our team will contact you."
 
     def check_for_missing_info(self, state, service_type):
-        missing_fields = [f for f in REQUIRED_FIELDS.get(service_type, []) if not state.get('collected_data', {}).get(f)]
-        if not missing_fields: return None
+        collected_data = state.get('collected_data', {})
+        missing_fields = []
         
+        # Check what's actually missing
+        for field in REQUIRED_FIELDS.get(service_type, []):
+            if not collected_data.get(field):
+                missing_fields.append(field)
+        
+        if not missing_fields: 
+            return None
+        
+        # Ask for the FIRST missing field only
         first_missing = missing_fields[0]
-        if first_missing == 'customer_type': return "Are you a domestic customer or trade customer?"
-        if first_missing == 'firstName': return "I'd be happy to help. What's your name?"
-        if first_missing == 'postcode': return "What's your complete postcode? For example, LS14ED rather than just LS1."
-        if first_missing == 'phone': return "What's the best phone number to contact you on?"
-        if first_missing == 'address_line1': return "What's the first line of your address?"
-        if first_missing == 'level_load': return "Is the skip a level load?"
-        if first_missing == 'prohibited_check': return "Can you confirm there are no prohibited items in the skip?"
-        if first_missing == 'access_issues': return "Are there any access issues for collection?"
+        
+        if first_missing == 'customer_type': 
+            return "Are you a domestic customer or trade customer?"
+        if first_missing == 'firstName': 
+            return "I'd be happy to help. What's your name?"
+        if first_missing == 'postcode': 
+            return "What's your complete postcode? For example, LS14ED rather than just LS1."
+        if first_missing == 'phone': 
+            return "What's the best phone number to contact you on?"
+        if first_missing == 'address_line1': 
+            return "What's the first line of your address?"
+        if first_missing == 'level_load': 
+            return "Is the skip a level load?"
+        if first_missing == 'prohibited_check': 
+            return "Can you confirm there are no prohibited items in the skip?"
+        if first_missing == 'access_issues': 
+            return "Are there any access issues for collection?"
         
         # MAV specific fields
-        if first_missing == 'volume': return "How many cubic yards do you estimate you have? Remember, two washing machines equal about one cubic yard."
-        if first_missing == 'when_required': return "When do you need this collection? Today, tomorrow, or a specific date?"
+        if first_missing == 'volume': 
+            return "How many cubic yards do you estimate you have? Remember, two washing machines equal about one cubic yard."
+        if first_missing == 'when_required': 
+            return "When do you need this collection? Today, tomorrow, or a specific date?"
         
         # Grab specific fields  
-        if first_missing == 'material_type': return "What type of material needs removing? Is it soil and rubble (muckaway) or mixed materials?"
-        if first_missing == 'access_details': return "Are there any access issues? Any narrow roads, height restrictions, or parking limitations?"
+        if first_missing == 'material_type': 
+            return "What type of material needs removing? Is it soil and rubble (muckaway) or mixed materials?"
+        if first_missing == 'access_details': 
+            return "Are there any access issues? Any narrow roads, height restrictions, or parking limitations?"
         
         return None
 
@@ -1226,6 +1249,17 @@ class SkipAgent(BaseAgent):
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['skip'])
 
+        # Handle prohibited items first - NEVER transfer skip calls
+        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture', 'mattress', 'fridge', 'freezer']):
+            return "We can't take sofas, chairs, upholstered furniture, mattresses (£15 charge), or fridges (£20 charge) in skips. Our man and van service can collect these items for you. Would you like to continue with skip hire for other waste?"
+        
+        if 'plasterboard' in message.lower(): 
+            return "Plasterboard isn't allowed in normal skips. If you have a lot, we can arrange a special plasterboard skip, or our man and van service can collect it for you. Would you like to continue with skip hire?"
+        
+        if any(item in message.lower() for item in ['prohibited', 'not allowed', 'can\'t put', 'what can\'t']):
+            return "Items that can't go in skips include: mattresses (£15 charge), fridges (£20 charge), upholstery, plasterboard, asbestos, paint, liquids, tyres, and gas cylinders. Our man and van service can collect most of these items. Would you like to continue with skip hire?"
+
+        # NEVER transfer skip calls - always complete the sale
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
@@ -1233,7 +1267,7 @@ class SkipAgent(BaseAgent):
         if has_all_required_data and not state.get('price'):
             # Check for heavy materials and large skip combination
             if state.get('collected_data', {}).get('type') in ['10yd', '12yd', '14yd', '16yd', '20yd'] and any(material in message.lower() for material in ['soil', 'rubble', 'concrete', 'bricks', 'heavy']):
-                return SKIP_HIRE_RULES['A2_heavy_materials']['heavy_materials_max']
+                return "For heavy materials such as soil & rubble: the largest skip you can have would be an 8-yard. Shall I get you the cost of an 8-yard skip?"
             
             # Set default type if not specified
             if not state.get('collected_data', {}).get('type'):
@@ -1244,15 +1278,6 @@ class SkipAgent(BaseAgent):
         if wants_to_book and state.get('price'):
             return self.complete_booking(state, conversation_id)
         
-        # Handle prohibited items queries
-        if 'plasterboard' in message.lower(): 
-            return SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
-        if any(item in message.lower() for item in ['prohibited', 'not allowed', 'can\'t put']):
-            return SKIP_HIRE_RULES['A5_prohibited_items']['full_script']
-        if any(item in message.lower() for item in ['fridge', 'mattress', 'freezer']):
-            return SKIP_HIRE_RULES['A5_prohibited_items']['restrictions_response']
-        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']):
-            return "We can't take sofas, chairs, or upholstered furniture in skips as they're prohibited items."
         if 'permit' in message.lower() and any(term in message.lower() for term in ['cost', 'price', 'charge']):
             return "We'll arrange the permit for you and include the cost in your quote. The price varies by council."
             
@@ -1636,6 +1661,37 @@ def user_dashboard_page():
                 .catch(error => console.error('Dashboard error:', error));
         }
         
+        // Reduce update frequency and prevent unnecessary updates
+        let lastCallsData = JSON.stringify([]);
+        let updateInProgress = false;
+
+        function loadDashboard() {
+            if (updateInProgress) return;
+            updateInProgress = true;
+            
+            fetch('/api/dashboard/user')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const currentCallsData = JSON.stringify(data.data.live_calls);
+                        
+                        // Only update if data actually changed
+                        if (currentCallsData !== lastCallsData) {
+                            updateCallsDisplay(data.data.live_calls);
+                            lastCallsData = currentCallsData;
+                        }
+                        
+                        // Always update these lightweight elements
+                        document.getElementById('active-calls').textContent = `${data.data.active_calls} Active Calls`;
+                        document.getElementById('last-update').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+                    }
+                })
+                .catch(error => console.error('Dashboard error:', error))
+                .finally(() => {
+                    updateInProgress = false;
+                });
+        }
+        
         function updateCallsDisplay(calls) {
             const container = document.getElementById('calls-container');
 
@@ -1650,99 +1706,67 @@ def user_dashboard_page():
                 return;
             }
 
-            // Remove no-calls message if it exists
+            // Remove no-calls message if present
             const noCallsMsg = container.querySelector('.no-calls');
-            if (noCallsMsg) {
-                noCallsMsg.remove();
-            }
+            if (noCallsMsg) noCallsMsg.remove();
 
-            // Create a map of existing call elements to avoid recreating them
-            const existingCalls = new Map();
-            const existingElements = container.querySelectorAll('.call-item[data-call-id]');
-            existingElements.forEach(el => {
-                const id = el.getAttribute('data-call-id');
-                existingCalls.set(id, el);
-            });
+            // Get current call elements
+            const currentElements = Array.from(container.querySelectorAll('[data-call-id]'));
+            const currentCallIds = currentElements.map(el => el.getAttribute('data-call-id'));
+            const newCallIds = calls.map(call => call.id);
 
-            // Track which calls we've processed
-            const processedCalls = new Set();
-
-            // Update or create call elements
-            calls.forEach(call => {
-                processedCalls.add(call.id);
-                
-                const collected_data = call.collected_data || {};
-                const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-                const isSelected = selectedCallId === call.id;
-                
-                if (existingCalls.has(call.id)) {
-                    // Update existing element content only if needed
-                    const existingEl = existingCalls.get(call.id);
-                    const currentContent = existingEl.innerHTML;
-                    
-                    const newContent = `
-                        <div class="call-header">
-                            <div class="call-id">${call.id}</div>
-                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        </div>
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                        <div class="transcript">${last_message}</div>
-                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                        </div>
-                    `;
-                    
-                    // Only update if content actually changed
-                    if (currentContent !== newContent) {
-                        existingEl.innerHTML = newContent;
-                    }
-                    
-                    // Maintain selection state
-                    if (isSelected) {
-                        existingEl.style.border = '2px solid #667eea';
-                        existingEl.style.backgroundColor = '#e8f0fe';
-                    } else {
-                        existingEl.style.border = 'none';
-                        existingEl.style.backgroundColor = '#f8f9fa';
-                    }
-                } else {
-                    // Create new element - add to top of container
-                    const newEl = document.createElement('div');
-                    newEl.className = "call-item";
-                    newEl.setAttribute('data-call-id', call.id);
-                    newEl.onclick = () => selectCall(call.id);
-                    newEl.innerHTML = `
-                        <div class="call-header">
-                            <div class="call-id">${call.id}</div>
-                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        </div>
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                        <div class="transcript">${last_message}</div>
-                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                        </div>
-                    `;
-                    
-                    if (isSelected) {
-                        newEl.style.border = '2px solid #667eea';
-                        newEl.style.backgroundColor = '#e8f0fe';
-                    }
-                    
-                    // Add to top of container
-                    container.insertBefore(newEl, container.firstChild);
+            // Remove calls that no longer exist
+            currentElements.forEach(element => {
+                const callId = element.getAttribute('data-call-id');
+                if (!newCallIds.includes(callId)) {
+                    element.remove();
                 }
             });
 
-            // Remove calls that no longer exist
-            existingCalls.forEach((element, callId) => {
-                if (!processedCalls.has(callId)) {
-                    element.remove();
+            // Add or update calls
+            calls.forEach(call => {
+                let element = container.querySelector(`[data-call-id="${call.id}"]`);
+                const isSelected = selectedCallId === call.id;
+                
+                const collected_data = call.collected_data || {};
+                const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
+                
+                const content = `
+                    <div class="call-header">
+                        <div class="call-id">${call.id}</div>
+                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+                    </div>
+                    <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+                    <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                    <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+                    <div class="transcript">${last_message}</div>
+                    <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                        ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                    </div>
+                `;
+
+                if (!element) {
+                    // Create new element
+                    element = document.createElement('div');
+                    element.className = 'call-item';
+                    element.setAttribute('data-call-id', call.id);
+                    element.onclick = () => selectCall(call.id);
+                    container.insertBefore(element, container.firstChild);
+                }
+                
+                // Update content only if it changed
+                if (element.innerHTML !== content) {
+                    element.innerHTML = content;
+                }
+                
+                // Update selection state
+                if (isSelected) {
+                    element.style.border = '2px solid #667eea';
+                    element.style.backgroundColor = '#e8f0fe';
+                } else {
+                    element.style.border = 'none';
+                    element.style.backgroundColor = '#f8f9fa';
                 }
             });
         }
