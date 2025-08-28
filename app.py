@@ -188,26 +188,15 @@ def is_business_hours():
 
 def send_webhook(conversation_id, data, reason):
     try:
-        # Extract customer data with fallbacks
-        collected_data = data.get('collected_data', {})
-        history = data.get('history', [])
+        customer_data = state['collected_data']
+        customer_data['price'] = state['price']
+        customer_data['booking_ref'] = state['booking_ref']
+            
         
         payload = {
-            "conversation_id": conversation_id,
-            "timestamp": datetime.now().isoformat(),
-            "action_type": reason,
-            "stage": data.get('stage', 'unknown'),
-            "customer_name": collected_data.get('firstName', ''),
-            "customer_phone": collected_data.get('phone', ''),
-            "customer_postcode": collected_data.get('postcode', ''),
-            "service_type": collected_data.get('service', ''),
-            "service_size": collected_data.get('type', ''),
-            "price_quoted": data.get('price', ''),
-            "booking_reference": data.get('booking_ref', ''),
-            "full_transcript": '\n'.join(history) if history else '',
-            "raw_customer_data": collected_data,
-            "conversation_stage": data.get('stage', 'unknown'),
-            "total_messages": len(history)
+            "customer_data": customer_data,
+            "customer_data['price'] : customer_data['price']",
+            "customer_data['booking_ref']": customer_data['booking_ref'],
         }
         
         webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
