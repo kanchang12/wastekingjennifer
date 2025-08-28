@@ -188,19 +188,41 @@ def is_business_hours():
 
 def send_webhook(conversation_id, data, reason):
     try:
+        # Extract customer data with fallbacks
+        collected_data = data.get('collected_data', {})
+        history = data.get('history', [])
+        
         payload = {
             "conversation_id": conversation_id,
             "timestamp": datetime.now().isoformat(),
             "action_type": reason,
-            "customer_data": data.get('collected_data', {}),
             "stage": data.get('stage', 'unknown'),
-            "full_transcript": data.get('history', [])
+            "customer_name": collected_data.get('firstName', ''),
+            "customer_phone": collected_data.get('phone', ''),
+            "customer_postcode": collected_data.get('postcode', ''),
+            "service_type": collected_data.get('service', ''),
+            "service_size": collected_data.get('type', ''),
+            "price_quoted": data.get('price', ''),
+            "booking_reference": data.get('booking_ref', ''),
+            "full_transcript": '\n'.join(history) if history else '',
+            "raw_customer_data": collected_data,
+            "conversation_stage": data.get('stage', 'unknown'),
+            "total_messages": len(history)
         }
-        requests.post(os.getenv('WEBHOOK_UR1L', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json=payload, timeout=5)
-        print(f"Webhook sent successfully for {reason}: {conversation_id}")
+        
+        webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
+        
+        print(f"Sending webhook to: {webhook_url}")
+        print(f"Webhook payload: {payload}")
+        
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        response.raise_for_status()
+        
+        print(f"Webhook sent successfully for {reason}: {conversation_id} (Status: {response.status_code})")
         return True
     except Exception as e:
         print(f"Webhook failed for {conversation_id}: {e}")
+        print(f"Payload was: {payload if 'payload' in locals() else 'Not created'}")
         return False
 
 def send_sms(name, phone, booking_ref, price, payment_link):
