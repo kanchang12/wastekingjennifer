@@ -1085,254 +1085,185 @@ def user_dashboard_page():
 
     <script>
         let allCalls = new Map();
-let isLoading = false;
-let currentFilter = 'all';
-let lastUpdateHash = '';
+        let isLoading = false;
+        let currentFilter = 'all';
 
-function showLoading() {
-    const loading = document.getElementById('loading');
-    if (loading) loading.style.display = 'inline-block';
-}
+        function showLoading() {
+            const loading = document.getElementById('loading');
+            if (loading) loading.style.display = 'inline-block';
+        }
 
-function hideLoading() {
-    const loading = document.getElementById('loading');
-    if (loading) loading.style.display = 'none';
-}
+        function hideLoading() {
+            const loading = document.getElementById('loading');
+            if (loading) loading.style.display = 'none';
+        }
 
-function loadDashboard() {
-    if (isLoading) return;
-    isLoading = true;
-    showLoading();
-    
-    fetch('/api/dashboard/user')
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Create a hash to check if data actually changed
-                const newHash = JSON.stringify(data.data.live_calls);
-                if (newHash === lastUpdateHash) {
-                    // No changes, just update stats without touching call list
-                    updateStatsOnly(data.data);
-                    return;
-                }
-                lastUpdateHash = newHash;
-                
-                // Update data store
-                const newCalls = new Map();
-                data.data.live_calls.forEach(call => {
-                    newCalls.set(call.id, call);
+        function loadDashboard() {
+            if (isLoading) return;
+            isLoading = true;
+            showLoading();
+            
+            fetch('/api/dashboard/user')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update data store
+                        allCalls.clear();
+                        data.data.live_calls.forEach(call => {
+                            allCalls.set(call.id, call);
+                        });
+                        
+                        updateCallsDisplay();
+                        
+                        // Update stats
+                        document.getElementById('active-calls').textContent = `${data.data.active_calls} Active Calls`;
+                        document.getElementById('total-calls').textContent = data.data.total_calls;
+                        document.getElementById('last-update').innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
+                    }
+                })
+                .catch(error => console.error('Dashboard error:', error))
+                .finally(() => {
+                    isLoading = false;
+                    hideLoading();
                 });
-                allCalls = newCalls;
-                
-                updateCallsDisplay();
-                updateStatsOnly(data.data);
+        }
+
+        function updateCallsDisplay() {
+            const container = document.getElementById('calls-container');
+            if (!container) return;
+
+            const calls = Array.from(allCalls.values()).sort((a, b) => 
+                new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+            );
+
+            const filteredCalls = filterCallsByService(calls);
+
+            if (filteredCalls.length === 0) {
+                container.innerHTML = `
+                    <div class="no-calls">
+                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
+                        <h3>No calls found</h3>
+                        <p style="margin-top: 10px; color: #999;">Waiting for calls...</p>
+                    </div>`;
+                return;
             }
-        })
-        .catch(error => console.error('Dashboard error:', error))
-        .finally(() => {
-            isLoading = false;
-            hideLoading();
-        });
-}
 
-function updateStatsOnly(data) {
-    // Update header stats only - no DOM rebuilding
-    const activeCallsEl = document.getElementById('active-calls');
-    const totalCallsEl = document.getElementById('total-calls');
-    const lastUpdateEl = document.getElementById('last-update');
-    
-    if (activeCallsEl) activeCallsEl.textContent = `${data.active_calls} Active Calls`;
-    if (totalCallsEl) totalCallsEl.textContent = data.total_calls;
-    if (lastUpdateEl) {
-        lastUpdateEl.innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
-    }
-}
-
-function updateCallsDisplay() {
-    const container = document.getElementById('calls-container');
-    if (!container) return;
-
-    const calls = Array.from(allCalls.values()).sort((a, b) => 
-        new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-    );
-
-    const filteredCalls = filterCallsByService(calls);
-
-    if (filteredCalls.length === 0) {
-        container.innerHTML = `
-            <div class="no-calls">
-                <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                <h3>No calls found for "${currentFilter}" filter</h3>
-                <p style="margin-top: 10px; color: #999;">Try selecting a different filter</p>
-            </div>`;
-        return;
-    }
-
-    // Get existing call elements to avoid rebuilding
-    const existingCalls = new Map();
-    container.querySelectorAll('.call-item').forEach(el => {
-        const id = el.id.replace('call-', '');
-        existingCalls.set(id, el);
-    });
-
-    // Update or create elements without full rebuild
-    filteredCalls.forEach(call => {
-        const existingEl = existingCalls.get(call.id);
-        if (existingEl) {
-            // Update existing element content only
-            updateCallElement(existingEl, call);
-            existingCalls.delete(call.id); // Mark as processed
-        } else {
-            // Create new element
-            const newEl = createCallElement(call);
-            container.appendChild(newEl);
+            // Simple rebuild - works reliably
+            container.innerHTML = '';
+            filteredCalls.forEach(call => {
+                const callEl = createCallElement(call);
+                container.appendChild(callEl);
+            });
         }
-    });
 
-    // Remove elements that no longer exist
-    existingCalls.forEach(el => el.remove());
-}
-
-function updateCallElement(element, call) {
-    const collected_data = call.collected_data || {};
-    const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-    const isActive = call.status === 'active';
-    
-    // Update only content that might change - preserve structure
-    const durationEl = element.querySelector('.duration');
-    if (durationEl) durationEl.textContent = `${call.duration || 0}m`;
-    
-    const stageEl = element.querySelector('.stage');
-    if (stageEl) {
-        stageEl.className = `stage stage-${call.stage || 'unknown'}`;
-        stageEl.textContent = call.stage || 'Unknown';
-    }
-    
-    const transcriptEl = element.querySelector('.transcript-preview');
-    if (transcriptEl) transcriptEl.textContent = last_message;
-    
-    // Update active indicator
-    const activeIndicator = element.querySelector('.active-indicator');
-    if (isActive && !activeIndicator) {
-        element.insertAdjacentHTML('afterbegin', '<div class="active-indicator"></div>');
-    } else if (!isActive && activeIndicator) {
-        activeIndicator.remove();
-    }
-}
-
-function createCallElement(call) {
-    const callEl = document.createElement('div');
-    callEl.className = "call-item";
-    callEl.id = `call-${call.id}`;
-    
-    const collected_data = call.collected_data || {};
-    const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-    const isActive = call.status === 'active';
-    
-    callEl.innerHTML = `
-        ${isActive ? '<div class="active-indicator"></div>' : ''}
-        <div class="call-header">
-            <div class="call-id">${call.id}</div>
-            <div class="call-status">
-                <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                <div class="duration">${call.duration || 0}m</div>
-            </div>
-        </div>
-        <div class="call-details">
-            <div class="call-info-row">
-                <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-            </div>
-            <div class="call-info-row">
-                <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                <div><strong>Phone:</strong> ${collected_data.phone || 'Not provided'}</div>
-            </div>
-            ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-            ${call.booking_ref ? `<div><strong>Booking:</strong> ${call.booking_ref}</div>` : ''}
-        </div>
-        <div class="transcript-preview">${last_message}</div>
-        <div style="font-size: 11px; color: #666; margin-top: 10px; text-align: right;">
-            Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-        </div>
-    `;
-    
-    callEl.addEventListener('click', () => openModal(call));
-    return callEl;
-}
-
-function filterCallsByService(calls) {
-    if (currentFilter === 'all') return calls;
-    
-    return calls.filter(call => {
-        const service = call.collected_data?.service || '';
-        const stage = call.stage || '';
-        
-        switch(currentFilter) {
-            case 'skip': return service === 'skip';
-            case 'mav': return service === 'mav';
-            case 'grab': return service === 'grab';
-            case 'complaint': return stage.includes('complaint') || stage.includes('transfer');
-            case 'transfer': return stage.includes('transfer');
-            case 'other': return !['skip', 'mav', 'grab'].includes(service);
-            default: return true;
+        function createCallElement(call) {
+            const callEl = document.createElement('div');
+            callEl.className = "call-item";
+            callEl.id = `call-${call.id}`;
+            
+            const collected_data = call.collected_data || {};
+            const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
+            const isActive = call.status === 'active';
+            
+            callEl.innerHTML = `
+                ${isActive ? '<div class="active-indicator"></div>' : ''}
+                <div class="call-header">
+                    <div class="call-id">${call.id}</div>
+                    <div class="call-status">
+                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+                        <div class="duration">${call.duration || 0}m</div>
+                    </div>
+                </div>
+                <div class="call-details">
+                    <div class="call-info-row">
+                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                    </div>
+                    <div class="call-info-row">
+                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+                        <div><strong>Phone:</strong> ${collected_data.phone || 'Not provided'}</div>
+                    </div>
+                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+                    ${call.booking_ref ? `<div><strong>Booking:</strong> ${call.booking_ref}</div>` : ''}
+                </div>
+                <div class="transcript-preview">${last_message}</div>
+                <div style="font-size: 11px; color: #666; margin-top: 10px; text-align: right;">
+                    Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                </div>
+            `;
+            
+            callEl.addEventListener('click', () => openModal(call));
+            return callEl;
         }
-    });
-}
 
-function filterCalls() {
-    const filterEl = document.getElementById('service-filter');
-    currentFilter = filterEl.value;
-    updateCallsDisplay();
-}
+        function filterCallsByService(calls) {
+            if (currentFilter === 'all') return calls;
+            
+            return calls.filter(call => {
+                const service = call.collected_data?.service || '';
+                const stage = call.stage || '';
+                
+                switch(currentFilter) {
+                    case 'skip': return service === 'skip';
+                    case 'mav': return service === 'mav';
+                    case 'grab': return service === 'grab';
+                    case 'complaint': return stage.includes('complaint') || stage.includes('transfer');
+                    case 'transfer': return stage.includes('transfer');
+                    case 'other': return !['skip', 'mav', 'grab'].includes(service);
+                    default: return true;
+                }
+            });
+        }
 
-function openModal(call) {
-    const modal = document.getElementById('callModal');
-    const collected = call.collected_data || {};
-    
-    document.getElementById('modal-title').textContent = `Call Details - ${call.id}`;
-    document.getElementById('modal-call-id').textContent = call.id || '';
-    document.getElementById('modal-customer-name').textContent = collected.firstName || 'Not provided';
-    document.getElementById('modal-customer-phone').textContent = collected.phone || 'Not provided';
-    document.getElementById('modal-customer-postcode').textContent = collected.postcode || 'Not provided';
-    document.getElementById('modal-service-type').textContent = collected.service || 'Not identified';
-    document.getElementById('modal-current-stage').textContent = call.stage || 'Unknown';
-    document.getElementById('modal-price-quote').textContent = call.price || 'Not quoted';
-    document.getElementById('modal-call-duration').textContent = `${call.duration || 0} minutes`;
-    document.getElementById('modal-booking-ref').textContent = call.booking_ref || 'Not assigned';
-    document.getElementById('modal-full-transcript').textContent = (call.history || []).join('\n\n') || 'No transcript available';
-    
-    document.querySelectorAll('.detail-value').forEach(el => {
-        el.classList.toggle('filled', !!el.textContent && el.textContent.trim() !== '' && !el.textContent.includes('Not'));
-    });
-    
-    modal.style.display = 'block';
-}
+        function filterCalls() {
+            const filterEl = document.getElementById('service-filter');
+            currentFilter = filterEl.value;
+            updateCallsDisplay();
+        }
 
-function closeModal() {
-    document.getElementById('callModal').style.display = 'none';
-}
+        function openModal(call) {
+            const modal = document.getElementById('callModal');
+            const collected = call.collected_data || {};
+            
+            document.getElementById('modal-title').textContent = `Call Details - ${call.id}`;
+            document.getElementById('modal-call-id').textContent = call.id || '';
+            document.getElementById('modal-customer-name').textContent = collected.firstName || 'Not provided';
+            document.getElementById('modal-customer-phone').textContent = collected.phone || 'Not provided';
+            document.getElementById('modal-customer-postcode').textContent = collected.postcode || 'Not provided';
+            document.getElementById('modal-service-type').textContent = collected.service || 'Not identified';
+            document.getElementById('modal-current-stage').textContent = call.stage || 'Unknown';
+            document.getElementById('modal-price-quote').textContent = call.price || 'Not quoted';
+            document.getElementById('modal-call-duration').textContent = `${call.duration || 0} minutes`;
+            document.getElementById('modal-booking-ref').textContent = call.booking_ref || 'Not assigned';
+            document.getElementById('modal-full-transcript').textContent = (call.history || []).join('\\n\\n') || 'No transcript available';
+            
+            document.querySelectorAll('.detail-value').forEach(el => {
+                el.classList.toggle('filled', !!el.textContent && el.textContent.trim() !== '' && !el.textContent.includes('Not'));
+            });
+            
+            modal.style.display = 'block';
+        }
 
-window.onclick = function(event) {
-    const modal = document.getElementById('callModal');
-    if (event.target === modal) {
-        closeModal();
-    }
-}
+        function closeModal() {
+            document.getElementById('callModal').style.display = 'none';
+        }
 
-// Initialize - 2 second refresh, fixed UI elements
-document.addEventListener('DOMContentLoaded', () => {
-    loadDashboard();
-    setInterval(() => {
-        if (!isLoading) {
+        window.onclick = function(event) {
+            const modal = document.getElementById('callModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+
+        // 2 second refresh - simple and reliable
+        document.addEventListener('DOMContentLoaded', () => {
             loadDashboard();
-        }
-    }, 2000); // 2 seconds refresh
-});
+            setInterval(loadDashboard, 2000);
+        });
     </script>
 </body>
 </html>
 """)
-
 @app.route('/dashboard/manager')
 def manager_dashboard_page():
     return render_template_string("""
