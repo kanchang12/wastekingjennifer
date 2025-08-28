@@ -236,8 +236,7 @@ Customer Type: Trade
 Conversation Summary:
 {chr(10).join(conversation_history[-5:]) if conversation_history else 'No conversation history'}
 
-Action Required: Follow up with trade customer for pricing and availability.
-Priority: Standard
+Action Required: Follow up with trade customer for pricing and availability. Priority: Standard
 """
     
     trade_recipient = os.getenv('TRADE_EMAIL_RECIPIENT')
@@ -285,9 +284,7 @@ CONVERSATION SUMMARY:
 {chr(10).join(conversation_history[-10:]) if conversation_history else 'No conversation history'}
 
 ACTION REQUIRED: 
-Please call back customer to provide pricing and arrange service.
-
-Priority: Standard
+Please call back customer to provide pricing and arrange service. Priority: Standard
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
     
@@ -362,7 +359,6 @@ def is_business_hours():
     print(f"DEBUG: UK time estimate: {uk_now.strftime('%A %H:%M')}")
     print(f"DEBUG: Day: {day}, Hour: {hour}")
     
-    # It's 17:30 (5:30 PM) - should be CLOSED
     if day < 4:  # Monday-Thursday (8-17)
         is_open = 8 <= hour < 17
         print(f"DEBUG: Monday-Thursday hours (8-17): {is_open}")
@@ -397,7 +393,7 @@ def send_webhook(conversation_id, data, reason):
         webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
         
         requests.post(webhook_url, json=payload, timeout=5)
-        
+    
         print(f"Webhook sent successfully for {reason}: {conversation_id}")
         return True
     except Exception as e:
@@ -417,11 +413,7 @@ def send_sms(name, phone, booking_ref, price, payment_link):
  
 Please click the secure link below to complete your payment: {payment_link}
  
-As part of our service, you'll receive digital waste transfer notes for your records. We're also proud to be planting trees every week to offset our carbon footprint.
- 
-If you were happy with our service, we'd really appreciate it if you could leave us a review at https://uk.trustpilot.com/review/wastekingrubbishclearance.com.
- 
-Find out more about us at www.wastekingrubbishclearance.co.uk.
+As part of our service, you'll receive digital waste transfer notes for your records. We're also proud to be planting trees every week to offset our carbon footprint. If you were happy with our service, we'd really appreciate it if you could leave us a review at https://uk.trustpilot.com/review/wastekingrubbishclearance.com. Find out more about us at www.wastekingrubbishclearance.co.uk.
  
 Best regards,
 The Waste King Team"""
@@ -567,7 +559,7 @@ class DashboardManager:
         for call in self.all_calls.values():
             service = call.get('collected_data', {}).get('service', 'unknown')
             services[service] = services.get(service, 0) + 1
-            
+        
         return {
             'total_calls': total_calls,
             'completed_calls': completed_calls,
@@ -614,7 +606,7 @@ class BaseAgent:
             if special_response.get('callback_required'):
                 state['callback_required'] = True
                 state['callback_reason'] = special_response.get('callback_reason', 'General inquiry')
-                
+            
                 if state.get('collected_data', {}).get('customer_type') == 'trade':
                     send_trade_customer_email(state['collected_data'], state['history'])
                 else:
@@ -1066,7 +1058,7 @@ class BaseAgent:
             if address_match:
                 data['address_line1'] = address_match.group(1).strip()
                 break
-        
+
         # Level load confirmation
         if any(phrase in message_lower for phrase in ['level load', 'level', 'not overloaded', 'flush']):
             data['level_load'] = 'yes' if any(positive in message_lower for positive in ['yes', 'level', 'flush']) else 'no'
@@ -1161,7 +1153,6 @@ class BaseAgent:
         if not API_AVAILABLE:
             send_webhook(conversation_id, state, 'api_unavailable')
             return 'Our team will contact you to complete your booking.'
-        
         try:
             customer_data = state['collected_data']
             customer_data['price'] = state['price']
@@ -1176,7 +1167,7 @@ class BaseAgent:
                 
                 state['booking_completed'] = True
                 self.conversations[conversation_id] = state
-                
+
                 if payment_link and customer_data.get('phone'):
                     send_sms(customer_data['firstName'], customer_data['phone'], booking_ref, price, payment_link)
                 
@@ -1420,7 +1411,7 @@ class GrabAgent(BaseAgent):
             state.get('collected_data', {}).get('when_required') and 
             state.get('collected_data', {}).get('access_details') and
             not state.get('email_sent')):
-            
+        
             state['email_sent'] = True
             state['stage'] = 'information_collected'
             self.conversations[conversation_id] = state
@@ -1674,7 +1665,7 @@ def user_dashboard_page():
                 .then(data => {
                     if (data.success) {
                         const currentCallsData = JSON.stringify(data.data.live_calls);
-                        
+            
                         // Only update if data actually changed
                         if (currentCallsData !== lastCallsData) {
                             updateCallsDisplay(data.data.live_calls);
@@ -1694,7 +1685,6 @@ def user_dashboard_page():
         
         function updateCallsDisplay(calls) {
             const container = document.getElementById('calls-container');
-
             if (!calls || calls.length === 0) {
                 if (!container.querySelector('.no-calls')) {
                     container.innerHTML = `
@@ -1714,7 +1704,6 @@ def user_dashboard_page():
             const currentElements = Array.from(container.querySelectorAll('[data-call-id]'));
             const currentCallIds = currentElements.map(el => el.getAttribute('data-call-id'));
             const newCallIds = calls.map(call => call.id);
-
             // Remove calls that no longer exist
             currentElements.forEach(element => {
                 const callId = element.getAttribute('data-call-id');
@@ -1745,7 +1734,6 @@ def user_dashboard_page():
                         ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
                     </div>
                 `;
-
                 if (!element) {
                     // Create new element
                     element = document.createElement('div');
@@ -1773,13 +1761,11 @@ def user_dashboard_page():
         
         function selectCall(callId) {
             selectedCallId = callId;
-            
             // Remove previous selection styling
             document.querySelectorAll('.call-item').forEach(item => {
                 item.style.border = 'none';
                 item.style.backgroundColor = '#f8f9fa';
             });
-            
             // Add selection styling
             const selectedElement = document.querySelector(`[data-call-id="${callId}"]`);
             if (selectedElement) {
@@ -1795,7 +1781,7 @@ def user_dashboard_page():
                         const callData = data.data.live_calls.find(call => call.id === callId);
                         if (callData) {
                             const collected = callData.collected_data || {};
-                            
+                        
                             document.getElementById('customer-name').value = collected.firstName || '';
                             document.getElementById('customer-phone').value = collected.phone || '';
                             document.getElementById('customer-postcode').value = collected.postcode || '';
@@ -1803,8 +1789,7 @@ def user_dashboard_page():
                             document.getElementById('customer-type').value = collected.customer_type || '';
                             document.getElementById('current-stage').value = callData.stage || '';
                             document.getElementById('price-quote').value = callData.price || '';
-                            document.getElementById('full-transcript').value = (callData.history || []).join('\\n');
-                            
+                            document.getElementById('full-transcript').value = (callData.history || []).join('\n');
                             const fields = ['customer-name', 'customer-phone', 'customer-postcode', 'service-type', 'customer-type', 'current-stage', 'price-quote'];
                             fields.forEach(fieldId => {
                                 const input = document.getElementById(fieldId);
@@ -1953,7 +1938,7 @@ def manager_dashboard_page():
                                 </div>
                             `;
                         }).join('') || '<div style="color: #666;">No service data yet</div>';
-                        
+                    
                         updateCallbackList(data.data.callback_required_calls || []);
                         updateCallsList(data.data.recent_calls || []);
                     }
@@ -2019,7 +2004,6 @@ def manager_dashboard_page():
                 if (isCallback) callClass += ' callback-required';
                 else if (isSkipSale) callClass += ' skip-sale';
                 else if (isInfoCase) callClass += ' info-case';
-                
                 return `
                     <div class="${callClass}">
                         <div class="call-header">
@@ -2106,7 +2090,6 @@ def test_interface_page():
 
     <script>
         let currentConversationId = null;
-        
         function testMessage() {
             const message = document.getElementById('test-message').value;
             sendMessage(message);
@@ -2180,7 +2163,6 @@ def test_interface_page():
                 "No prohibited items",
                 "Yes, I want to book it"
             ];
-            
             await runTestSequence(messages, resultsDiv);
         }
         
@@ -2199,7 +2181,6 @@ def test_interface_page():
                 "No mattresses or fridges",
                 "Yes book it please"
             ];
-            
             await runTestSequence(messages, resultsDiv);
         }
         
@@ -2217,7 +2198,6 @@ def test_interface_page():
                             conversation_id: currentConversationId
                         })
                     });
-                    
                     const data = await response.json();
                     currentConversationId = data.conversation_id;
                     
@@ -2229,7 +2209,6 @@ def test_interface_page():
                         price: data.price,
                         success: data.success
                     });
-                    
                     await new Promise(resolve => setTimeout(resolve, 500));
                     
                 } catch (error) {
@@ -2274,7 +2253,7 @@ def manager_dashboard_api():
 
 
 if __name__ == '__main__':
-    print("🚀 Starting WasteKing FINAL System...")
+    print("🚀 Starting WasteKing Merged System...")
     print("✅ All agents initialized with domestic/trade customer detection")
     print("✅ Skip sales NEVER transferred - all completed")
     print("✅ Manager dashboard shows ALL calls with callback flags")
