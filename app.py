@@ -343,6 +343,7 @@ class DashboardManager:
             return round(duration)
         return 0
     
+    # Fix 1: Update the DashboardManager to send webhooks on every call update
     def update_call(self, conversation_id, data):
         self.start_call(conversation_id)
         
@@ -364,6 +365,14 @@ class DashboardManager:
         
         if existing_call != merged_data:
             self.live_calls[conversation_id] = merged_data
+            
+            # Send webhook for every significant update that has customer data
+            if merged_data.get('collected_data') and (
+                merged_data.get('collected_data').get('firstName') or 
+                merged_data.get('collected_data').get('phone') or 
+                merged_data.get('collected_data').get('postcode')
+            ):
+                send_webhook(conversation_id, merged_data, 'conversation_update')
     
     def get_call_by_id(self, conversation_id):
         """Get specific call data by ID"""
@@ -447,12 +456,14 @@ class BaseAgent:
             return {'response': TRANSFER_RULES['management_director']['out_of_hours'], 'stage': 'transfer_completed', 'reason': 'director_request'}
         if any(complaint in message_lower for complaint in TRANSFER_RULES['complaints']['triggers']):
             return {'response': TRANSFER_RULES['complaints']['out_of_hours'], 'stage': 'transfer_completed', 'reason': 'complaint'}
+        
         for service_type, config in LG_SERVICES.items():
             if any(trigger in message_lower for trigger in config['triggers']):
+                print(f"DETECTED LG SERVICE: {service_type} with triggers {config['triggers']}")  # Debug
                 if service_type == 'waste_bags':
                     return {'response': LG_SERVICES['waste_bags']['scripts']['info'], 'stage': 'info_provided', 'reason': 'waste_bags'}
                 return {'response': config['scripts']['transfer'], 'stage': 'transfer_completed', 'reason': f'lg_service_{service_type}'}
-
+    
         if any(term in message_lower for term in ['depot close by', 'local to me', 'near me']):
             return {'response': CONVERSATION_STANDARDS['location_response'], 'stage': 'info_provided', 'reason': 'location_query'}
         if any(term in message_lower for term in ['speak to human', 'talk to person', 'human agent']):
