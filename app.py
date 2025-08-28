@@ -196,7 +196,7 @@ def send_webhook(conversation_id, data, reason):
             "stage": data.get('stage', 'unknown'),
             "full_transcript": data.get('history', [])
         }
-        requests.post(os.getenv('WEBHOOK_UR1L', "https://webhook.site/9f1bad8e-dade-4eb1-872d-a23e6e42a1d7"), json=payload, timeout=5)
+        requests.post(os.getenv('WEBHOOK_UR1L', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json=payload, timeout=5)
         print(f"Webhook sent successfully for {reason}: {conversation_id}")
         return True
     except Exception as e:
