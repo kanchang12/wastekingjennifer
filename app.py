@@ -1176,29 +1176,6 @@ def manager_dashboard_api():
         traceback.print_exc()
         return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
 
-@app.route('/api/test-interface')
-def test_interface_page():
-    return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Test WasteKing System</title>
-</head>
-<body>
-    <h1>WasteKing System Test</h1>
-</body>
-</html>
-""")
-
-@app.route('/api/health')
-def health():
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "agents": ["Skip", "MAV", "Grab (DEFAULT MANAGER)"],
-        "api_configured": API_AVAILABLE,
-        "all_rules_covered": True,
-    })
 
 if __name__ == '__main__':
     print("🚀 Starting WasteKing FINAL System...")
