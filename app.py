@@ -992,8 +992,31 @@ class BaseAgent:
         
         return None
 
+    # Rewritten part of BaseAgent.get_next_response()
     def get_next_response(self, message, state, conversation_id):
-        raise NotImplementedError("Subclass must implement get_next_response method")
+        # 1. Update collected data from the new message
+        new_data = self.extract_data(message)
+        state['collected_data'].update(new_data)
+    
+        # 2. Check for missing required information first and foremost
+        # This is the single source of truth for asking questions.
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
+    
+        # 3. If all required data is collected, proceed with service-specific logic
+        # This ensures no more "what's your postcode?" questions.
+        has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS.get(self.service_type, []))
+    
+        if has_all_required_data:
+            # Now, proceed with logic that is safe because all info is here.
+            if self.service_type == 'skip':
+                return self.get_pricing(state, conversation_id, self.should_book(message))
+            else:
+                return self.handle_lead_generation(state, conversation_id)
+    
+        # Fallback response for unhandled cases
+        return "I'm sorry, I'm not quite sure how to help with that. Can you please tell me what you need?"
     
     def extract_data(self, message):
         data = {}
@@ -1352,39 +1375,38 @@ class MAVAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         collected_data = state.get('collected_data', {})
-        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['mav'])
 
-        # Check for heavy materials first - immediate transfer
+        # 1. Update collected data from the current message
+        new_data = self.extract_data(message)
+        state['collected_data'].update(new_data)
+
+        # 2. Check for heavy materials first; this is an immediate transfer to human.
         if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
-            return MAV_RULES['B2_heavy_materials']['script']
+            return "Our man and van service is designed for light waste. A skip might be more suitable. I'll arrange for our team to call you back to discuss this in more detail."
 
-        # Check for missing required information first - NO DOUBLE QUESTIONING
+        # 3. Check for missing required information first and foremost
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
 
-        # If we have all required information, send email to Kanchan - NO PRICING
+        # 4. If all required data is collected, proceed with lead generation
+        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['mav'])
         if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
             state['stage'] = 'lead_sent'
             self.conversations[conversation_id] = state
-            
+
             # Send email to Kanchan with all collected info
             send_non_skip_inquiry_email(collected_data, 'mav', state.get('history', []))
             
+            # Formulate the final response based on business hours
             if is_business_hours():
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your man & van details. Our team will call you back within the next few hours with pricing and availability."
+                return f"Thank you, {collected_data.get('firstName', '')}. I have all your man & van details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with? Thanks for trusting Waste King"
             else:
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your man & van details. Our team will call you back first thing tomorrow with pricing and availability."
+                return f"Thank you, {collected_data.get('firstName', '')}. I have all your man & van details. Our team will call you back first thing tomorrow with pricing and availability. Is there anything else I can help with? Thanks for trusting Waste King"
 
-        # Handle timing questions
-        if 'sunday' in message.lower(): 
-            return MAV_RULES['B5_additional_timing']['sunday_collections']['script']
-        if any(time_phrase in message.lower() for time_phrase in ['what time', 'specific time', 'exact time', 'morning', 'afternoon']):
-            return MAV_RULES['B5_additional_timing']['time_script']
-
-        # Default response if no specific action is triggered
-        return "I need just a few more details to arrange your man & van collection."
+        # 5. Fallback for unexpected messages or conversation already completed
+        return "I have all the information I need, thank you. Our team will call you back shortly."
 
 
 class GrabAgent(BaseAgent):
