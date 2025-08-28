@@ -5,3 +5,4 @@ gunicorn
 twilio
 elevenlabs
 openai
+flask-cors
