@@ -183,8 +183,8 @@ GENERAL_SCRIPTS = {
 
 REQUIRED_FIELDS = {
     'skip': ['firstName', 'postcode', 'phone', 'customer_type'],
-    'mav': ['firstName', 'postcode', 'phone', 'customer_type'],
-    'grab': ['firstName', 'postcode', 'phone', 'customer_type'],
+    'mav': ['firstName', 'postcode', 'phone', 'customer_type', 'volume', 'when_required'],
+    'grab': ['firstName', 'postcode', 'phone', 'customer_type', 'material_type', 'when_required', 'access_details'],
     'skip_collection': ['firstName', 'postcode', 'phone', 'address_line1', 'level_load', 'prohibited_check', 'access_issues']
 }
 
@@ -243,28 +243,55 @@ Priority: Standard
     trade_recipient = os.getenv('TRADE_EMAIL_RECIPIENT')
     return send_email(subject, body, trade_recipient)
 
-def send_callback_email(customer_data, conversation_history, callback_reason):
-    subject = f"Customer Callback Required - {customer_data.get('firstName', 'Unknown')}"
+def send_non_skip_inquiry_email(customer_data, service_type, conversation_history):
+    """Send email to Kanchan for all non-skip services"""
+    subject = f"{service_type.upper()} Service Inquiry - {customer_data.get('firstName', 'Unknown')}"
+    
+    # Format all collected data nicely
     body = f"""
-Customer Callback Request:
+New {service_type.upper()} Service Inquiry:
 
-Customer Name: {customer_data.get('firstName', 'Not provided')}
-Phone: {customer_data.get('phone', 'Not provided')}
-Postcode: {customer_data.get('postcode', 'Not provided')}
-Service Required: {customer_data.get('service', 'Not specified')}
-Customer Type: {customer_data.get('customer_type', 'Not specified')}
+CUSTOMER DETAILS:
+- Name: {customer_data.get('firstName', 'Not provided')}
+- Phone: {customer_data.get('phone', 'Not provided')}
+- Postcode: {customer_data.get('postcode', 'Not provided')}
+- Customer Type: {customer_data.get('customer_type', 'Not specified')}
+- Service Required: {service_type.upper()}
 
-Callback Reason: {callback_reason}
-
-Recent Conversation:
-{chr(10).join(conversation_history[-5:]) if conversation_history else 'No conversation history'}
-
-Action Required: Call back customer as promised.
-Priority: High
+SPECIFIC DETAILS:
 """
     
-    callback_recipient = os.getenv('CALLBACK_EMAIL_RECIPIENT', os.getenv('ZOHO_EMAIL'))
-    return send_email(subject, body, callback_recipient)
+    # Add service-specific details
+    if service_type == 'mav':
+        body += f"""- Estimated Volume: {customer_data.get('volume', 'Not specified')} cubic yards
+- Supplement Items: {customer_data.get('supplement_items', 'Not checked')}
+- Collection Location: {customer_data.get('collection_location', 'Not specified')}
+- When Required: {customer_data.get('when_required', 'Not specified')}"""
+    
+    elif service_type == 'grab':
+        body += f"""- Grab Type: {customer_data.get('type', 'Not specified')}
+- Material Type: {customer_data.get('material_type', 'Not specified')}
+- When Required: {customer_data.get('when_required', 'Not specified')}
+- Access Details: {customer_data.get('access_details', 'Not specified')}"""
+    
+    # Add any other collected details
+    for key, value in customer_data.items():
+        if key not in ['firstName', 'phone', 'postcode', 'customer_type', 'service'] and value:
+            body += f"\n- {key.replace('_', ' ').title()}: {value}"
+    
+    body += f"""
+
+CONVERSATION SUMMARY:
+{chr(10).join(conversation_history[-10:]) if conversation_history else 'No conversation history'}
+
+ACTION REQUIRED: 
+Please call back customer to provide pricing and arrange service.
+
+Priority: Standard
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    
+    return send_email(subject, body, 'kanchan.ghosh@wasteking.co.uk')
 
 # --- ELEVENLABS SUPPLIER CALL FUNCTIONS ---
 def make_supplier_call(customer_data, service_type):
@@ -361,7 +388,18 @@ def send_sms(name, phone, booking_ref, price, payment_link):
             from twilio.rest import Client
             client = Client(twilio_sid, twilio_token)
             formatted_phone = f"+44{phone[1:]}" if phone.startswith('0') else phone
-            message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
+            message = f"""Thank You for Choosing Waste King 🌱
+ 
+Please click the secure link below to complete your payment: {payment_link}
+ 
+As part of our service, you'll receive digital waste transfer notes for your records. We're also proud to be planting trees every week to offset our carbon footprint.
+ 
+If you were happy with our service, we'd really appreciate it if you could leave us a review at https://uk.trustpilot.com/review/wastekingrubbishclearance.com.
+ 
+Find out more about us at www.wastekingrubbishclearance.co.uk.
+ 
+Best regards,
+The Waste King Team"""
             client.messages.create(body=message, from_=twilio_phone, to=formatted_phone)
             print(f"SMS sent to {phone}")
     except Exception as e:
@@ -393,6 +431,47 @@ class OpenAIQuestionValidator:
         except Exception as e:
             print(f"OpenAI response generation error: {e}")
             return f"Thank you! I have your details and I'm getting your {service_type} quote now."
+    
+    def handle_general_query(self, message, conversation_history):
+        """Handle general customer queries using ChatGPT for natural responses"""
+        try:
+            prompt = f"""You are Jennifer, a friendly UK-based Waste King customer service agent. Respond naturally to this customer message: "{message}"
+
+IMPORTANT RULES:
+- Keep responses under 2 sentences and conversational
+- Never use words like "brilliant", "excellent", "perfect" - use natural phrases like "That's good", "I'd be happy to help", "No problem"
+- We offer ALL these services: skip hire, man & van clearances, grab hire, toilet hire, road sweeping, aggregates, wheelie bins, asbestos removal, hazardous waste, and RORO skips
+- For general greetings like "how are you", respond warmly but briefly then offer help
+- If asked about specific people (like Tracey), politely redirect to how you can help
+- For service exchanges, confirm we can help and ask for their details
+- Don't be overly rigid about postcodes - accept partial postcodes initially
+- If customer seems in a hurry, acknowledge it and work efficiently
+- For pricing questions, explain you'll get them a quote quickly
+- Be conversational and natural, like a real person would speak
+
+Previous conversation: {conversation_history[-3:] if conversation_history else 'None'}
+
+Respond as Jennifer would - friendly, natural, and helpful."""
+
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo", 
+                messages=[{"role": "user", "content": prompt}], 
+                max_tokens=80, 
+                temperature=0.5
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"OpenAI general query error: {e}")
+            # Fallback responses for common queries
+            message_lower = message.lower()
+            if any(greeting in message_lower for greeting in ['how are you', 'hello', 'hi there']):
+                return "I'm well, thank you! How can I help you today?"
+            elif 'exchange' in message_lower:
+                return "No problem, I can help with exchanging your skip. What's your postcode?"
+            elif any(name in message_lower for name in ['tracey', 'glenn', 'manager']):
+                return "I'd be happy to help you directly. What can I assist you with?"
+            else:
+                return "I'd be happy to help you with that. What do you need?"
 
 # DASHBOARD MANAGER
 class DashboardManager:
@@ -432,7 +511,12 @@ class DashboardManager:
         
         for call_id, call_data in self.recent_calls.items():
             call_time = datetime.fromisoformat(call_data['timestamp'].replace('Z', '+00:00').replace('+00:00', ''))
-            if call_time < cutoff_time:
+            # Only remove calls that are both OLD and COMPLETED/INACTIVE
+            # Keep active calls visible regardless of time
+            is_old = call_time < cutoff_time
+            is_inactive = call_data.get('status') in ['completed', 'transfer_completed']
+            
+            if is_old and is_inactive:
                 calls_to_remove.append(call_id)
         
         for call_id in calls_to_remove:
@@ -488,6 +572,14 @@ class BaseAgent:
                 self.conversations[conversation_id] = state.copy()
                 return customer_type_response
         
+        # Handle LG question flows
+        if state.get('stage') == 'collecting_lg_info':
+            lg_response = self.handle_lg_questions(message, state, conversation_id)
+            if lg_response:
+                state['history'].append(f"Agent: {lg_response}")
+                self.conversations[conversation_id] = state.copy()
+                return lg_response
+        
         special_response = self.check_special_rules(message, state)
         if special_response:
             state['history'].append(f"Agent: {special_response['response']}")
@@ -501,7 +593,7 @@ class BaseAgent:
                 if state.get('collected_data', {}).get('customer_type') == 'trade':
                     send_trade_customer_email(state['collected_data'], state['history'])
                 else:
-                    send_callback_email(state['collected_data'], state['history'], state['callback_reason'])
+                    send_non_skip_inquiry_email(state['collected_data'], special_response.get('reason', 'general'), state['history'])
             
             send_webhook(conversation_id, {'collected_data': state['collected_data'], 'history': state['history'], 'stage': state['stage']}, special_response.get('reason', 'transfer'))
             self.conversations[conversation_id] = state.copy()
@@ -523,6 +615,183 @@ class BaseAgent:
         
         return response
 
+    def handle_lg_questions(self, message, state, conversation_id):
+        """Handle LG service question flows"""
+        lg_service = state.get('lg_service_type')
+        collected = state.get('collected_data', {})
+        
+        # Extract basic info first
+        new_data = self.extract_data(message)
+        state['collected_data'].update(new_data)
+        collected = state['collected_data']
+        
+        # Road Sweeper questions
+        if lg_service == 'road_sweeper':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('hours_required'):
+                return "How many hours do you require?"
+            elif not collected.get('tipping_location'):
+                return "Is there tipping on site or do we have to take it away?"
+            elif not collected.get('when_required'):
+                return "When do you require this?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Extract hours and tipping info from message
+                if 'hour' in message.lower():
+                    hour_match = re.search(r'(\d+)\s*hour', message.lower())
+                    if hour_match:
+                        state['collected_data']['hours_required'] = f"{hour_match.group(1)} hours"
+                
+                if any(phrase in message.lower() for phrase in ['on site', 'onsite', 'tipping on site']):
+                    state['collected_data']['tipping_location'] = 'On site'
+                elif any(phrase in message.lower() for phrase in ['take away', 'take it away', 'off site']):
+                    state['collected_data']['tipping_location'] = 'Take away'
+                
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'road_sweeper', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # Toilet Hire questions
+        elif lg_service == 'toilet_hire':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('number_required'):
+                return "How many portable toilets do you require?"
+            elif not collected.get('event_or_longterm'):
+                return "Is this for an event or long-term hire?"
+            elif not collected.get('duration'):
+                return "How long do you need them for?"
+            elif not collected.get('delivery_date'):
+                return "When do you need them delivered?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Extract number required
+                number_match = re.search(r'(\d+)', message)
+                if number_match:
+                    state['collected_data']['number_required'] = f"{number_match.group(1)} toilets"
+                
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'toilet_hire', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # Asbestos questions
+        elif lg_service == 'asbestos':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('skip_or_collection'):
+                return "Do you need a skip or a collection service?"
+            elif not collected.get('asbestos_type'):
+                return "What type of asbestos is it?"
+            elif not collected.get('dismantle_or_collection'):
+                return "Do you need dismantling or just collection?"
+            elif not collected.get('quantity'):
+                return "What quantity are we dealing with?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'asbestos', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our certified asbestos team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our certified asbestos team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # Wait and Load questions
+        elif lg_service == 'wait_and_load':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('waste_type'):
+                return "What type of waste needs removing?"
+            elif not collected.get('when_required'):
+                return "When do you require this service?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'wait_and_load', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # Aggregates questions
+        elif lg_service == 'aggregates':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('tipper_or_grab'):
+                return "Do you need tipper delivery or grab delivery?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'aggregates', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # RORO questions
+        elif lg_service == 'roro':
+            if not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('waste_type'):
+                return "What type of waste will you be putting in the RORO?"
+            elif not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, 'roro', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        # Default for other LG services
+        else:
+            if not collected.get('firstName'):
+                return "What's your name?"
+            elif not collected.get('postcode'):
+                return "Can I take your postcode?"
+            elif not collected.get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Complete and send email
+                send_non_skip_inquiry_email(collected, lg_service or 'general', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our specialist team will call you back within the next few hours to confirm cost and availability. Is there anything else I can help with?"
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with?"
+        
+        return None
+
     def ask_customer_type(self, message, state):
         # Don't ask if they're clearly indicating service type already
         if any(service_word in message.lower() for service_word in ['skip', 'man and van', 'grab', 'collection']):
@@ -539,8 +808,19 @@ class BaseAgent:
 
     def check_special_rules(self, message, state):
         message_lower = message.lower()
+        customer_type = state.get('collected_data', {}).get('customer_type')
         
-        # Skip collection handling
+        # If TRADE customer, ALL services become LG transfers
+        if customer_type == 'trade':
+            # Skip collection handling for trade
+            if any(trigger in message_lower for trigger in LG_SERVICES['skip_collection']['triggers']):
+                return {'response': LG_SERVICES['skip_collection']['script'], 'stage': 'collecting_lg_info', 'reason': 'skip_collection_trade', 'callback_required': True, 'callback_reason': 'Trade skip collection request'}
+            
+            # ANY other service for trade customers = LG transfer
+            if any(service in message_lower for service in ['skip', 'man and van', 'mav', 'grab', 'toilet', 'road sweep', 'asbestos', 'aggregates', 'roro', 'wait and load']):
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you.", 'stage': 'collecting_lg_info', 'reason': 'trade_customer_service', 'callback_required': True, 'callback_reason': 'Trade customer service inquiry'}
+        
+        # Skip collection handling (domestic only now)
         if any(trigger in message_lower for trigger in LG_SERVICES['skip_collection']['triggers']):
             return {'response': LG_SERVICES['skip_collection']['script'], 'stage': 'collecting_skip_collection_info', 'reason': 'skip_collection', 'callback_required': True, 'callback_reason': 'Skip collection request'}
         
@@ -558,27 +838,88 @@ class BaseAgent:
             else:
                 return {'response': TRANSFER_RULES['complaints']['out_of_hours'], 'stage': 'callback_promised', 'reason': 'complaint', 'callback_required': True, 'callback_reason': 'Customer complaint - requires callback'}
         
-        # LG Services
-        for service_type, config in LG_SERVICES.items():
-            if service_type == 'skip_collection':
-                continue  # Already handled above
-            if 'triggers' in config and any(trigger in message_lower for trigger in config['triggers']):
-                if service_type == 'waste_bags':
-                    return {'response': LG_SERVICES['waste_bags']['scripts']['info'], 'stage': 'info_provided', 'reason': 'waste_bags'}
-                make_supplier_call(state.get('collected_data', {}), service_type)
-                return {'response': config['scripts']['transfer'], 'stage': 'transfer_completed', 'reason': f'lg_service_{service_type}', 'callback_required': True, 'callback_reason': f'{service_type} inquiry'}
+        # Specific person requests (Tracey, etc.)
+        if any(name in message_lower for name in ['tracey', 'speak to tracey', 'talk to tracey']):
+            return {'response': "Yes I can see if she's available. What's your name, your telephone number, what is your company name? What is the call regarding?", 'stage': 'collecting_transfer_info', 'reason': 'person_request', 'callback_required': True, 'callback_reason': 'Request to speak to specific person'}
+        
+        # LG Services - Now with proper question flows
+        # Road Sweeper
+        if any(trigger in message_lower for trigger in ['road sweeper', 'road sweeping', 'street sweeping']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'road_sweeper'
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'road_sweeper'}
+        
+        # Toilet Hire
+        if any(trigger in message_lower for trigger in ['toilet hire', 'portaloo', 'portable toilet']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'toilet_hire'
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'toilet_hire'}
+        
+        # Asbestos
+        if any(trigger in message_lower for trigger in ['asbestos']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'asbestos'
+                return {'response': "Asbestos requires specialist handling. Let me take a few details and arrange for our certified team to call you back. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'asbestos'}
+        
+        # RORO
+        if any(trigger in message_lower for trigger in ['40 yard', '40-yard', 'roro', 'roll on roll off', '30 yard', '35 yard']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'roro'
+                return {'response': "Let me take some details and get our specialist team to contact you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'roro'}
+        
+        # Wait and Load
+        if any(trigger in message_lower for trigger in ['wait and load', 'wait & load', 'wait load']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'wait_and_load'
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'wait_and_load'}
+        
+        # Aggregates
+        if any(trigger in message_lower for trigger in ['aggregates', 'sand', 'gravel', 'stone']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'aggregates'
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'aggregates'}
+        
+        # Hazardous Waste
+        if any(trigger in message_lower for trigger in ['hazardous waste', 'chemical waste', 'dangerous waste']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'hazardous_waste'
+                return {'response': "Hazardous waste requires specialist handling. Let me take a few details and arrange for our certified team to call you back. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'hazardous_waste'}
+        
+        # Wheelie Bins
+        if any(trigger in message_lower for trigger in ['wheelie bin', 'wheelie bins', 'bin hire']):
+            if not state.get('lg_questions_started'):
+                state['lg_questions_started'] = True
+                state['lg_service_type'] = 'wheelie_bins'
+                return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'wheelie_bins'}
+        
+        # Waste Bags
+        if any(trigger in message_lower for trigger in ['skip bag', 'waste bag', 'skip sack']):
+            return {'response': LG_SERVICES['waste_bags']['scripts']['info'], 'stage': 'info_provided', 'reason': 'waste_bags'}
 
         # General queries
         if any(term in message_lower for term in ['depot close by', 'local to me', 'near me']):
             return {'response': GENERAL_SCRIPTS['location_response'], 'stage': 'info_provided', 'reason': 'location_query'}
         if any(term in message_lower for term in ['speak to human', 'talk to person', 'human agent']):
-            return {'response': GENERAL_SCRIPTS['human_request'], 'stage': 'transfer_completed', 'reason': 'human_request'}
+            return {'response': "Yes I can see if someone is available. What's your name, your telephone number, what is your company name? What is the call regarding?", 'stage': 'collecting_transfer_info', 'reason': 'human_request', 'callback_required': True, 'callback_reason': 'Human agent request'}
         if any(term in message_lower for term in ['when can you deliver', 'delivery time', 'when will skip arrive']):
             return {'response': SKIP_HIRE_RULES['delivery_timing'], 'stage': 'info_provided', 'reason': 'delivery_timing'}
         if any(term in message_lower for term in ['what time', 'specific time', 'exact time']):
             return {'response': GENERAL_SCRIPTS['timing_query'], 'stage': 'info_provided', 'reason': 'timing_query'}
         if any(term in message_lower for term in ['call you back', 'call back', 'phone around', 'check with someone']):
             return {'response': SKIP_HIRE_RULES['not_booking_response'], 'stage': 'quote_sent', 'reason': 'not_booking_now'}
+        
+        # Handle general conversational queries with ChatGPT for natural responses
+        if any(phrase in message_lower for phrase in ['how are you', 'how are things', 'hello', 'hi there', 'good morning', 'good afternoon', 'exchange', 'swap']):
+            validator = OpenAIQuestionValidator()
+            response = validator.handle_general_query(message, state.get('history', []))
+            return {'response': response, 'stage': 'general_query_handled', 'reason': 'general_conversation'}
         
         return None
 
@@ -632,6 +973,66 @@ class BaseAgent:
                 if any(variant in message_lower for variant in [f'{size_num}-yard', f'{size_num} yard', f'{size_num}yd', f'{size_num} yd']):
                     data['type'] = size
                     break
+        
+        # LG Service specific data extraction
+        # Hours for road sweeper
+        if 'hour' in message_lower:
+            hour_match = re.search(r'(\d+)\s*hour', message_lower)
+            if hour_match:
+                data['hours_required'] = f"{hour_match.group(1)} hours"
+        
+        # Tipping location
+        if any(phrase in message_lower for phrase in ['on site', 'onsite', 'tipping on site']):
+            data['tipping_location'] = 'On site'
+        elif any(phrase in message_lower for phrase in ['take away', 'take it away', 'off site', 'offsite']):
+            data['tipping_location'] = 'Take away'
+        
+        # Number required (toilets, bins, etc.)
+        if any(word in message_lower for word in ['toilet', 'portaloo', 'bin']):
+            number_match = re.search(r'(\d+)', message)
+            if number_match:
+                data['number_required'] = f"{number_match.group(1)} units"
+        
+        # Event or long term
+        if any(phrase in message_lower for phrase in ['event', 'wedding', 'party', 'festival']):
+            data['event_or_longterm'] = 'Event'
+        elif any(phrase in message_lower for phrase in ['long term', 'longterm', 'ongoing', 'permanent']):
+            data['event_or_longterm'] = 'Long term'
+        
+        # Duration
+        if any(word in message_lower for word in ['day', 'week', 'month']):
+            duration_match = re.search(r'(\d+)\s*(day|week|month)', message_lower)
+            if duration_match:
+                data['duration'] = f"{duration_match.group(1)} {duration_match.group(2)}s"
+        
+        # When required
+        if any(when in message_lower for when in ['today', 'tomorrow', 'asap', 'urgent']):
+            data['when_required'] = 'ASAP'
+        elif any(when in message_lower for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+            for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
+                if day in message_lower:
+                    data['when_required'] = day.title()
+                    break
+        
+        # Skip or collection for asbestos
+        if any(word in message_lower for word in ['skip', 'container']):
+            data['skip_or_collection'] = 'Skip'
+        elif any(word in message_lower for word in ['collection', 'collect', 'remove']):
+            data['skip_or_collection'] = 'Collection'
+        
+        # Waste type
+        if any(waste in message_lower for waste in ['soil', 'rubble', 'concrete', 'bricks']):
+            data['waste_type'] = 'Heavy materials (soil/rubble)'
+        elif any(waste in message_lower for waste in ['wood', 'furniture', 'general', 'mixed']):
+            data['waste_type'] = 'General waste'
+        elif 'green' in message_lower:
+            data['waste_type'] = 'Green waste'
+        
+        # Tipper or grab for aggregates
+        if 'tipper' in message_lower:
+            data['tipper_or_grab'] = 'Tipper delivery'
+        elif 'grab' in message_lower:
+            data['tipper_or_grab'] = 'Grab delivery'
         
         # Address line 1
         address_patterns = [r'address\s+(?:is\s+)?(.+)', r'first line\s+(?:is\s+)?(.+)', r'live\s+(?:at\s+)?(.+)']
@@ -779,6 +1180,15 @@ class BaseAgent:
         if first_missing == 'level_load': return "Is the skip a level load?"
         if first_missing == 'prohibited_check': return "Can you confirm there are no prohibited items in the skip?"
         if first_missing == 'access_issues': return "Are there any access issues for collection?"
+        
+        # MAV specific fields
+        if first_missing == 'volume': return "How many cubic yards do you estimate you have? Remember, two washing machines equal about one cubic yard."
+        if first_missing == 'when_required': return "When do you need this collection? Today, tomorrow, or a specific date?"
+        
+        # Grab specific fields  
+        if first_missing == 'material_type': return "What type of material needs removing? Is it soil and rubble (muckaway) or mixed materials?"
+        if first_missing == 'access_details': return "Are there any access issues? Any narrow roads, height restrictions, or parking limitations?"
+        
         return None
 
 # --- AGENT SUBCLASSES ---
@@ -828,14 +1238,12 @@ class MAVAgent(BaseAgent):
     def __init__(self):
         super().__init__()
         self.service_type = 'mav'
-        self.default_type = '6yd'  # Changed from 4yd based on average
         self.service_name = 'man & van'
 
     def get_next_response(self, message, state, conversation_id):
-        wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['mav'])
 
-        # Check for heavy materials first
+        # Check for heavy materials first - immediate transfer
         if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
             return MAV_RULES['B2_heavy_materials']['script']
 
@@ -845,20 +1253,29 @@ class MAVAgent(BaseAgent):
             self.conversations[conversation_id] = state
             return MAV_RULES['supplement_check']
 
-        if has_all_required_data and not state.get('price'):
-            # Explain cubic yard pricing if not done
-            if not state.get('collected_data', {}).get('volume_explained'):
-                state['collected_data']['volume_explained'] = True
+        # Check if we need volume information
+        if has_all_required_data and not state.get('collected_data', {}).get('volume'):
+            if not state.get('volume_explained'):
+                state['volume_explained'] = True
                 return MAV_RULES['B1_information_gathering']['cubic_yard_explanation']
-            
-            # Set default volume if not specified
-            if not state.get('collected_data', {}).get('type'):
-                state['collected_data']['type'] = self.default_type
-            
-            return self.get_pricing(state, conversation_id, wants_to_book)
+            else:
+                return "How many cubic yards would you estimate you have?"
 
-        if wants_to_book and state.get('price'):
-            return self.complete_booking(state, conversation_id)
+        # Check for when required
+        if has_all_required_data and not state.get('collected_data', {}).get('when_required'):
+            return "When do you need the collection? Today, tomorrow, or a specific date?"
+
+        # If we have all information, send email to Kanchan instead of pricing
+        if has_all_required_data and state.get('supplement_check_done') and state.get('collected_data', {}).get('when_required'):
+            if not state.get('email_sent'):
+                state['email_sent'] = True
+                state['stage'] = 'information_collected'
+                self.conversations[conversation_id] = state
+                
+                # Send email to Kanchan with all collected info
+                send_non_skip_inquiry_email(state['collected_data'], 'mav', state.get('history', []))
+                
+                return f"Thank you {state['collected_data']['firstName']}, I have all your man & van details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with today?"
 
         # Handle timing questions
         if 'sunday' in message.lower(): 
@@ -866,26 +1283,54 @@ class MAVAgent(BaseAgent):
         if any(time_phrase in message.lower() for time_phrase in ['what time', 'specific time', 'exact time', 'morning', 'afternoon']):
             return MAV_RULES['B5_additional_timing']['time_script']
 
+        # Extract volume information
+        volume_match = re.search(r'(\d+)\s*(?:cubic\s*)?yard', message.lower())
+        if volume_match:
+            state['collected_data']['volume'] = f"{volume_match.group(1)} yards"
+
+        # Extract when required
+        if any(when in message.lower() for when in ['today', 'tomorrow', 'asap', 'urgent']):
+            state['collected_data']['when_required'] = 'ASAP'
+        elif any(when in message.lower() for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+            for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
+                if day in message.lower():
+                    state['collected_data']['when_required'] = day.title()
+                    break
+
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
         
-        return self.get_pricing(state, conversation_id, wants_to_book)
+        return "I need just a few more details to arrange your man & van collection."
 
 class GrabAgent(BaseAgent):
     def __init__(self):
         super().__init__()
         self.service_type = 'grab'
-        self.default_type = '6wheeler'
         self.service_name = 'grab hire'
 
     def get_next_response(self, message, state, conversation_id):
-        wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['grab'])
+        customer_type = state.get('collected_data', {}).get('customer_type')
+        
+        # For TRADE customers, immediately collect basic info and transfer to LG
+        if customer_type == 'trade':
+            if not state.get('collected_data', {}).get('firstName'):
+                return "What's your name?"
+            elif not state.get('collected_data', {}).get('postcode'):
+                return "What's your postcode?"
+            elif not state.get('collected_data', {}).get('phone'):
+                return "What's the best phone number to contact you on?"
+            else:
+                # Send to LG team for trade customers
+                send_non_skip_inquiry_email(state['collected_data'], 'grab_trade', state.get('history', []))
+                state['stage'] = 'information_collected'
+                if is_business_hours():
+                    return "Thank you, I have your details. Our specialist team will call you back within the next few hours to confirm cost and availability for your grab hire requirement. Is there anything else I can help with today?"
+                else:
+                    return "Thank you, I have your details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with today?"
 
-        if wants_to_book and state.get('price'):
-            return self.complete_booking(state, conversation_id)
-
+        # For DOMESTIC customers, collect detailed info then send to Kanchan
         # Explain wheeler types if mentioned
         if not state.get('collected_data', {}).get('wheeler_explained'):
             if '8 wheeler' in message.lower() or '8-wheeler' in message.lower():
@@ -897,28 +1342,72 @@ class GrabAgent(BaseAgent):
                 state['collected_data']['type'] = '6wheeler'
                 return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['6_wheeler']
 
-        # Check materials compatibility
-        if has_all_required_data and not state.get('collected_data', {}).get('materials_checked'):
-            has_soil_rubble = any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
-            has_other_items = any(item in message.lower() for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
-            if has_soil_rubble and has_other_items:
-                state['collected_data']['materials_checked'] = True
-                make_supplier_call(state.get('collected_data', {}), 'grab_mixed_materials')
-                return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
-            state['collected_data']['materials_checked'] = True
+        # Ask about material type if not collected
+        if has_all_required_data and not state.get('collected_data', {}).get('material_type'):
+            return "What type of material do you need removing? Is it soil and rubble (muckaway) or mixed materials?"
 
-        # Most grab hires need specialist assessment - transfer to team
-        if has_all_required_data and not state.get('grab_transferred'):
-            state['grab_transferred'] = True
-            make_supplier_call(state.get('collected_data', {}), 'grab_hire')
-            return "Most grab prices require specialist assessment. Let me put you through to our team who can provide accurate pricing."
+        # Check materials compatibility if we have material info
+        if has_all_required_data and state.get('collected_data', {}).get('material_type') and not state.get('materials_checked'):
+            material_type = state['collected_data']['material_type'].lower()
+            has_soil_rubble = any(material in material_type for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
+            has_other_items = any(item in material_type for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
+            
+            if has_soil_rubble and has_other_items:
+                state['materials_checked'] = True
+                return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
+            state['materials_checked'] = True
+
+        # Ask when required if not collected
+        if has_all_required_data and not state.get('collected_data', {}).get('when_required'):
+            return "When do you need the grab hire? Today, tomorrow, or a specific date?"
+
+        # Ask about access if not collected
+        if has_all_required_data and not state.get('collected_data', {}).get('access_details'):
+            return "Are there any access issues we should know about? Any narrow roads, height restrictions, or parking limitations?"
+
+        # If we have all information, send email to Kanchan instead of pricing
+        if (has_all_required_data and 
+            state.get('collected_data', {}).get('material_type') and 
+            state.get('collected_data', {}).get('when_required') and 
+            state.get('collected_data', {}).get('access_details') and
+            not state.get('email_sent')):
+            
+            state['email_sent'] = True
+            state['stage'] = 'information_collected'
+            self.conversations[conversation_id] = state
+            
+            # Send email to Kanchan with all collected info
+            send_non_skip_inquiry_email(state['collected_data'], 'grab', state.get('history', []))
+            
+            return f"Thank you {state['collected_data']['firstName']}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {state['collected_data'].get('type', 'grab')} requirement. Is there anything else I can help with today?"
+
+        # Extract material type from message
+        if any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth']):
+            state['collected_data']['material_type'] = 'Soil and rubble (muckaway)'
+        elif any(material in message.lower() for material in ['mixed', 'general', 'wood', 'furniture']):
+            state['collected_data']['material_type'] = 'Mixed materials'
+
+        # Extract when required
+        if any(when in message.lower() for when in ['today', 'tomorrow', 'asap', 'urgent']):
+            state['collected_data']['when_required'] = 'ASAP'
+        elif any(when in message.lower() for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+            for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
+                if day in message.lower():
+                    state['collected_data']['when_required'] = day.title()
+                    break
+
+        # Extract access details
+        if any(access in message.lower() for access in ['narrow', 'tight', 'restricted', 'difficult', 'no access', 'good access', 'easy access']):
+            if any(good in message.lower() for good in ['no issues', 'good access', 'easy access', 'no problem']):
+                state['collected_data']['access_details'] = 'Good access, no issues'
+            else:
+                state['collected_data']['access_details'] = 'Access restrictions mentioned'
 
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
         
-        # Fallback - shouldn't normally reach here
-        return "Let me get the grab hire details sorted for you."
+        return "I need just a few more details to arrange your grab hire."
 
 # --- FLASK APP AND ROUTING ---
 app = Flask(__name__)
@@ -1127,30 +1616,67 @@ def user_dashboard_page():
                 return;
             }
 
-            const callsHTML = calls.map(call => {
+            // Create a map of existing call elements
+            const existingCalls = new Map();
+            const existingElements = container.querySelectorAll('.call-item');
+            existingElements.forEach(el => {
+                const id = el.id.replace('call-', '');
+                existingCalls.set(id, el);
+            });
+
+            // Update or create call elements
+            const updatedCallIds = new Set();
+            calls.forEach(call => {
+                updatedCallIds.add(call.id);
+                
                 const collected_data = call.collected_data || {};
                 const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
                 const isSelected = selectedCallId === call.id;
                 
-                return `
-                    <div class="call-item ${isSelected ? 'selected' : ''}" onclick="selectCall('${call.id}')" id="call-${call.id}">
-                        <div class="call-header">
-                            <div class="call-id">${call.id}</div>
-                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        </div>
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                        <div class="transcript">${last_message}</div>
-                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                        </div>
+                const callHTML = `
+                    <div class="call-header">
+                        <div class="call-id">${call.id}</div>
+                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+                    </div>
+                    <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+                    <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                    <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+                    <div class="transcript">${last_message}</div>
+                    <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                        ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
                     </div>
                 `;
-            }).join('');
 
-            container.innerHTML = callsHTML;
+                if (existingCalls.has(call.id)) {
+                    // Update existing element
+                    const existingEl = existingCalls.get(call.id);
+                    existingEl.innerHTML = callHTML;
+                    if (isSelected) {
+                        existingEl.style.border = '2px solid #667eea';
+                        existingEl.style.backgroundColor = '#e8f0fe';
+                    }
+                } else {
+                    // Create new element
+                    const newEl = document.createElement('div');
+                    newEl.className = "call-item";
+                    newEl.id = `call-${call.id}`;
+                    newEl.onclick = () => selectCall(call.id);
+                    newEl.innerHTML = callHTML;
+                    if (isSelected) {
+                        newEl.style.border = '2px solid #667eea';
+                        newEl.style.backgroundColor = '#e8f0fe';
+                    }
+                    container.insertBefore(newEl, container.firstChild); // Add to top
+                }
+            });
+
+            // Remove calls that no longer exist
+            existingCalls.forEach((element, callId) => {
+                if (!updatedCallIds.has(callId)) {
+                    element.remove();
+                }
+            });
         }
         
         function selectCall(callId) {
@@ -1219,7 +1745,7 @@ def manager_dashboard_page():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WasteKing - Manager Analytics & Callbacks</title>
+    <title>WasteKing - Manager Analytics & Cases</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; background: #f5f6fa; }
         .header { background: linear-gradient(135deg, #764ba2, #667eea); color: white; padding: 25px; }
@@ -1232,13 +1758,18 @@ def manager_dashboard_page():
         .calls-section { background: white; border-radius: 15px; padding: 25px; max-height: 80vh; overflow-y: auto; }
         .call-item { background: #f8f9fa; border-radius: 10px; padding: 15px; margin-bottom: 10px; border-left: 4px solid #667eea; }
         .callback-required { border-left-color: #ff4757 !important; background: #fff5f5 !important; }
+        .skip-sale { border-left-color: #2ed573 !important; background: #f0fff4 !important; }
+        .info-case { border-left-color: #ffa502 !important; background: #fffbf0 !important; }
         .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .call-id { font-weight: bold; font-size: 14px; }
         .call-status { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
         .status-active { background: #d4edda; color: #155724; }
         .status-completed { background: #cce7ff; color: #004085; }
-        .status-transfer_completed { background: #fff3cd; color: #856404; }
+        .status-information_collected { background: #fff3cd; color: #856404; }
+        .status-transfer_completed { background: #e2e3e5; color: #495057; }
         .callback-badge { background: #ff4757; color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; margin-left: 5px; }
+        .skip-badge { background: #2ed573; color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; margin-left: 5px; }
+        .info-badge { background: #ffa502; color: white; padding: 2px 8px; border-radius: 10px; font-size: 10px; margin-left: 5px; }
         .call-details { font-size: 13px; color: #666; }
         .call-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 12px; }
         .refresh-btn { position: fixed; top: 100px; right: 25px; background: #667eea; color: white; border: none; padding: 12px 24px; border-radius: 25px; cursor: pointer; }
@@ -1254,7 +1785,7 @@ def manager_dashboard_page():
 <body>
     <div class="header">
         <h1>Manager Analytics Dashboard</h1>
-        <p>All calls with callback flags and complete analytics</p>
+        <p>Skip Sales & Information Cases - New Business Model</p>
     </div>
     
     <button class="refresh-btn" onclick="loadAnalytics()">Refresh</button>
@@ -1268,13 +1799,13 @@ def manager_dashboard_page():
                 </div>
                 
                 <div class="card">
-                    <div class="metric-value" style="color: #4caf50;" id="completed-calls">0</div>
-                    <div class="metric-label">Completed Sales</div>
+                    <div class="metric-value" style="color: #2ed573;" id="skip-sales">0</div>
+                    <div class="metric-label">Skip Sales (AI Completed)</div>
                 </div>
                 
                 <div class="card">
-                    <div class="metric-value" style="color: #ff9800;" id="conversion-rate">0%</div>
-                    <div class="metric-label">Conversion Rate</div>
+                    <div class="metric-value" style="color: #ffa502;" id="info-cases">0</div>
+                    <div class="metric-label">Info Cases (Sent to Kanchan)</div>
                 </div>
                 
                 <div class="card">
@@ -1307,20 +1838,24 @@ def manager_dashboard_page():
                 .then(data => {
                     if (data.success) {
                         document.getElementById('total-calls').textContent = data.data.total_calls;
-                        document.getElementById('completed-calls').textContent = data.data.completed_calls;
-                        document.getElementById('conversion-rate').textContent = data.data.conversion_rate.toFixed(1) + '%';
+                        document.getElementById('skip-sales').textContent = data.data.completed_skip_sales || 0;
+                        document.getElementById('info-cases').textContent = data.data.information_cases_sent || 0;
                         document.getElementById('callback-count').textContent = (data.data.callback_required_calls || []).length;
                         
                         const services = data.data.service_breakdown || {};
                         document.getElementById('service-breakdown').innerHTML = Object.entries(services).map(([service, count]) => {
                             const percentage = data.data.total_calls > 0 ? ((count / data.data.total_calls) * 100).toFixed(1) : 0;
+                            const serviceColor = service === 'skip' ? '#2ed573' : service === 'mav' || service === 'grab' ? '#ffa502' : '#667eea';
+                            const serviceLabel = service === 'skip' ? 'Skip (AI Sales)' : 
+                                               service === 'mav' ? 'Man & Van (Info Cases)' :
+                                               service === 'grab' ? 'Grab (Info Cases)' : service;
                             return `
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
                                     <div style="flex: 1;">
-                                        <strong>${service || 'Unknown'}</strong>
+                                        <strong>${serviceLabel}</strong>
                                         <div style="font-size: 12px; color: #666;">${percentage}% of calls</div>
                                     </div>
-                                    <div style="font-size: 24px; font-weight: bold; color: #667eea;">${count}</div>
+                                    <div style="font-size: 24px; font-weight: bold; color: ${serviceColor};">${count}</div>
                                 </div>
                             `;
                         }).join('') || '<div style="color: #666;">No service data yet</div>';
@@ -1372,21 +1907,36 @@ def manager_dashboard_page():
             }
             
             const callsHTML = calls.slice().reverse().map(call => {
-                const statusClass = call.status === 'active' ? 'status-active' : call.status === 'completed' ? 'status-completed' : 'status-transfer_completed';
-                const perfIndicator = call.status === 'completed' && call.price ? 'perf-excellent' : call.status === 'active' ? 'perf-good' : 'perf-poor';
+                const statusClass = call.status === 'active' ? 'status-active' : 
+                                   call.status === 'completed' ? 'status-completed' :
+                                   call.stage === 'information_collected' ? 'status-information_collected' : 'status-transfer_completed';
+                
+                const perfIndicator = (call.status === 'completed' && call.price) ? 'perf-excellent' : 
+                                     call.stage === 'information_collected' ? 'perf-good' :
+                                     call.status === 'active' ? 'perf-good' : 'perf-poor';
+                
                 const duration = call.timestamp ? Math.round((new Date() - new Date(call.timestamp)) / 1000 / 60) : 0;
                 const collected = call.collected_data || {};
                 const isCallback = call.callback_required;
+                const isSkipSale = collected.service === 'skip' && call.status === 'completed';
+                const isInfoCase = call.stage === 'information_collected';
+                
+                let callClass = 'call-item';
+                if (isCallback) callClass += ' callback-required';
+                else if (isSkipSale) callClass += ' skip-sale';
+                else if (isInfoCase) callClass += ' info-case';
                 
                 return `
-                    <div class="call-item ${isCallback ? 'callback-required' : ''}">
+                    <div class="${callClass}">
                         <div class="call-header">
                             <div class="call-id">
                                 <span class="performance-indicator ${perfIndicator}"></span>
                                 ${call.id}
                                 ${isCallback ? '<span class="callback-badge">CALLBACK</span>' : ''}
+                                ${isSkipSale ? '<span class="skip-badge">SKIP SALE</span>' : ''}
+                                ${isInfoCase ? '<span class="info-badge">INFO SENT</span>' : ''}
                             </div>
-                            <div class="call-status ${statusClass}">${call.status}</div>
+                            <div class="call-status ${statusClass}">${call.stage === 'information_collected' ? 'INFO COLLECTED' : call.status}</div>
                         </div>
                         <div class="call-details">
                             <strong>Customer:</strong> ${collected.firstName || 'Not provided'} (${collected.customer_type || 'Unknown type'})<br>
@@ -1396,6 +1946,7 @@ def manager_dashboard_page():
                             ${call.price ? `<br><strong>Price:</strong> ${call.price}` : ''}
                             ${call.booking_ref ? `<br><strong>Booking:</strong> ${call.booking_ref}` : ''}
                             ${isCallback ? `<br><strong>Callback Reason:</strong> ${call.callback_reason || 'General'}` : ''}
+                            ${isInfoCase ? `<br><strong>Status:</strong> Information sent to Kanchan for follow-up` : ''}
                         </div>
                         <div class="call-metrics">
                             <div><strong>Duration:</strong> ${duration}m</div>
