@@ -35,19 +35,19 @@ TRANSFER_RULES = {
         'triggers': ['glenn currie', 'director', 'speak to glenn'],
         'office_hours': "I am sorry, Glenn is not available, may I take your details and Glenn will call you back?",
         'out_of_hours': "I can take your details and have our director call you back first thing tomorrow",
-        'sms_notify': '+447823656762'
+        'sms_notify': '+447394642517'
     },
     'complaints': {
         'triggers': ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry'],
         'office_hours': "I understand your frustration, please bear with me while I transfer you to the appropriate person.",
         'out_of_hours': "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow.",
         'action': 'TRANSFER',
-        'sms_notify': '+447823656762'
+        'sms_notify': '+447394642517'
     },
     'specialist_services': {
         'services': ['hazardous waste disposal', 'asbestos removal', 'asbestos collection', 'weee electrical waste', 'chemical disposal', 'medical waste', 'trade waste'],
         'office_hours': 'Transfer immediately',
-        'out_of_hours': 'Take details + SMS notification to +447823656762'
+        'out_of_hours': 'Take details + SMS notification to +447394642517'
     }
 }
 
@@ -163,7 +163,7 @@ GRAB_RULES = {
     }
 }
 
-SMS_NOTIFICATION = '+447823656762'
+SMS_NOTIFICATION = '+447394642517'
 SURCHARGE_ITEMS = { 'fridges_freezers': 20, 'mattresses': 15, 'upholstered_furniture': 15, 'sofas': 15 }
 REQUIRED_FIELDS = {
     'skip': ['firstName', 'postcode', 'phone'],
