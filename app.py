@@ -677,7 +677,7 @@ def process_message_endpoint():
         traceback.print_exc()
         return jsonify({"success": False, "message": "I'll connect you with our team who can help immediately.", "error": str(e)}), 500
 
-# Fix for the `AssertionError` - use different function names for the page and API
+# This is the fix: unique function names for each dashboard route
 @app.route('/dashboard/user')
 def user_dashboard_page():
     return render_template_string("""
@@ -846,7 +846,7 @@ def user_dashboard_page():
 """)
 
 @app.route('/dashboard/manager')
-def manager_dashboard():
+def manager_dashboard_page():
     return render_template_string("""
 <!DOCTYPE html>
 <html>
@@ -1026,175 +1026,7 @@ def manager_dashboard_api():
         return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
 
 @app.route('/api/test-interface')
-def test_interface():
-    return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Test WasteKing System</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
-        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
-        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
-        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
-        .success { background: #d4edda; border: 1px solid #c3e6cb; }
-        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>WasteKing System Test</h1>
-        
-        <h3>Test Messages</h3>
-        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
-        <br>
-        <button onclick="testMessage()">Test Message</button>
-        <button onclick="testPricing()">Test Pricing Flow</button>
-        <button onclick="testComplaint()">Test Complaint</button>
-        <button onclick="testDirector()">Test Director Request</button>
-        
-        <div id="response" class="response" style="display: none;"></div>
-        
-        <h3>Pre-built Test Scenarios</h3>
-        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
-        <div id="full-test-results"></div>
-    </div>
-
-    <script>
-        let currentConversationId = null;
-        
-        function testMessage() {
-            const message = document.getElementById('test-message').value;
-            sendMessage(message);
-        }
-        
-        function testPricing() {
-            currentConversationId = null;
-            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
-        }
-        
-        function testComplaint() {
-            sendMessage("I want to make a complaint about my service");
-        }
-        
-        function testDirector() {
-            sendMessage("I need to speak to Glenn Currie");
-        }
-        
-        function sendMessage(message) {
-            const responseDiv = document.getElementById('response');
-            responseDiv.style.display = 'block';
-            responseDiv.textContent = 'Processing...';
-            responseDiv.className = 'response';
-            
-            fetch('/api/wasteking', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    customerquestion: message,
-                    conversation_id: currentConversationId
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    currentConversationId = data.conversation_id;
-                    responseDiv.className = 'response success';
-                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
-                } else {
-                    responseDiv.className = 'response error';
-                    responseDiv.textContent = `Error: ${data.message}`;
-                }
-            })
-            .catch(error => {
-                responseDiv.className = 'response error';
-                responseDiv.textContent = `Network Error: ${error.message}`;
-            });
-        }
-        
-        async function runFullTest() {
-            const resultsDiv = document.getElementById('full-test-results');
-            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
-            
-            const messages = [
-                "Hi, I need a skip",
-                "Abdul",
-                "LS1 4ED",
-                "07823656762",
-                "No prohibited items",
-                "Yes, I want to book it"
-            ];
-            
-            currentConversationId = null;
-            let results = [];
-            
-            for (let i = 0; i < messages.length; i++) {
-                try {
-                    const response = await fetch('/api/wasteking', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            customerquestion: messages[i],
-                            conversation_id: currentConversationId
-                        })
-                    });
-                    
-                    const data = await response.json();
-                    currentConversationId = data.conversation_id;
-                    
-                    results.push({
-                        step: i + 1,
-                        message: messages[i],
-                        response: data.message,
-                        stage: data.stage,
-                        price: data.price,
-                        success: data.success
-                    });
-                    
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    
-                } catch (error) {
-                    results.push({
-                        step: i + 1,
-                        message: messages[i],
-                        error: error.message
-                    });
-                }
-            }
-            
-            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
-                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
-                    <strong>Step ${result.step}: ${result.message}</strong><br>
-                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
-                </div>
-            `).join('');
-        }
-    </script>
-</body>
-</html>
-""")
-
-@app.route('/api/dashboard/user')
-def user_dashboard_api():
-    try:
-        dashboard_data = dashboard_manager.get_user_dashboard_data()
-        return jsonify({"success": True, "data": dashboard_data})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
-
-@app.route('/api/dashboard/manager')
-def manager_dashboard_api():
-    try:
-        dashboard_data = dashboard_manager.get_manager_dashboard_data()
-        return jsonify({"success": True, "data": dashboard_data})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
-
-@app.route('/api/test-interface')
-def test_interface():
+def test_interface_page():
     return render_template_string("""
 <!DOCTYPE html>
 <html>
@@ -1363,7 +1195,7 @@ def manager_dashboard_api():
         return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
 
 @app.route('/api/test-interface')
-def test_interface():
+def test_interface_page():
     return render_template_string("""
 <!DOCTYPE html>
 <html>
