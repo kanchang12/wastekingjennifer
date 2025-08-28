@@ -841,120 +841,70 @@ def user_dashboard_page():
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f5f6fa; }
+
+        /* HEADER */
         .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 25px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
         .header h1 { font-size: 28px; margin-bottom: 10px; }
         .stats { display: flex; gap: 30px; margin-top: 15px; font-size: 14px; }
         .live-dot { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; animation: pulse 2s infinite; }
-        .main { display: grid; grid-template-columns: 1fr 400px; gap: 20px; padding: 20px; margin-top: 120px; }
+
+        /* MAIN LAYOUT */
+        .main { display: grid; grid-template-columns: 1fr 450px; gap: 20px; padding: 20px; margin-top: 120px; }
         .calls-section, .form-section { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+
+        /* FILTER BAR */
+        .filters { display: flex; gap: 10px; margin-bottom: 15px; }
+        .filters button {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 20px;
+            background: #e9ecef;
+            cursor: pointer;
+            font-size: 13px;
+            transition: 0.2s;
+        }
+        .filters button.active, .filters button:hover { background: #667eea; color: white; }
+
+        /* CALL LIST */
         .calls-list { max-height: calc(100vh - 250px); overflow-y: auto; }
-        .call-item { 
-            background: #f8f9fa; 
-            border-radius: 10px; 
-            padding: 20px; 
-            margin-bottom: 15px; 
-            cursor: pointer; 
+        .call-item {
+            min-height: 140px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 15px;
+            cursor: pointer;
             transition: all 0.3s ease;
             border: 2px solid transparent;
-            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
-        .call-item:hover { 
-            background: #e9ecef; 
-            transform: translateY(-2px); 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .call-item.selected { 
-            background: #e3f2fd !important; 
-            border: 2px solid #2196f3 !important;
-            transform: translateY(-2px);
-        }
-        .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .call-item:hover { background: #e9ecef; }
+        .call-item.selected { background: #e3f2fd !important; border: 2px solid #2196f3 !important; }
+        .call-header { display: flex; justify-content: space-between; align-items: center; }
         .call-id { font-weight: bold; color: #667eea; font-size: 16px; }
-        .call-status { display: flex; align-items: center; gap: 8px; }
-        .stage { 
-            padding: 4px 12px; 
-            border-radius: 20px; 
-            font-size: 11px; 
-            font-weight: bold; 
-            text-transform: uppercase;
-            white-space: nowrap;
-        }
+        .stage { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; white-space: nowrap; }
         .stage-collecting_info { background: #fff3cd; color: #856404; }
         .stage-booking { background: #d4edda; color: #155724; }
         .stage-confirming_availability { background: #ffeaa7; color: #856404; }
         .stage-completed { background: #cce7ff; color: #004085; }
-        .stage-transfer_completed { background: #e2e3e5; color: #495057; }
-        .stage-processing { background: #f0f0f0; color: #666; }
-        .duration { 
-            font-size: 12px; 
-            color: #fff; 
-            background: #667eea; 
-            padding: 4px 8px; 
-            border-radius: 12px; 
-            font-weight: bold;
-        }
-        .call-details { margin: 10px 0; }
-        .call-details div { margin: 4px 0; font-size: 14px; }
-        .transcript { 
-            background: white; 
-            padding: 12px; 
-            border-radius: 8px; 
-            max-height: 80px; 
-            overflow-y: auto; 
-            font-size: 12px; 
-            margin-top: 10px;
-            border: 1px solid #e0e0e0;
-        }
+        .duration { font-size: 12px; color: #fff; background: #667eea; padding: 4px 8px; border-radius: 12px; font-weight: bold; }
+
+        .call-details { margin: 8px 0; font-size: 14px; }
+        .call-info-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .transcript { max-height: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #444; margin-top: 8px; }
+
+        /* FORM PANEL */
         .form-section { position: sticky; top: 140px; }
         .form-group { margin-bottom: 15px; }
-        .form-label { 
-            display: block; 
-            margin-bottom: 5px; 
-            font-weight: bold; 
-            font-size: 14px; 
-            color: #333;
-        }
-        .form-input { 
-            width: 100%; 
-            padding: 10px; 
-            border: 2px solid #e9ecef; 
-            border-radius: 8px;
-            font-size: 14px;
-            background: #f8f9fa;
-        }
-        .form-input.filled { 
-            background: #e8f5e8 !important; 
-            border-color: #4caf50 !important; 
-        }
-        .no-calls { text-align: center; padding: 60px; color: #666; }
-        .refresh-indicator { 
-            display: inline-block; 
-            width: 12px; 
-            height: 12px; 
-            border: 2px solid #ccc; 
-            border-top: 2px solid #667eea; 
-            border-radius: 50%; 
-            animation: spin 1s linear infinite; 
-            margin-left: 10px; 
-        }
-        .section-title { font-size: 20px; font-weight: bold; margin-bottom: 20px; color: #333; }
-        .call-info-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 8px 0; }
-        .active-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 10px;
-            height: 10px;
-            background: #4caf50;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse { 
-            0% { opacity: 1; transform: scale(1); } 
-            50% { opacity: 0.5; transform: scale(1.2); } 
-            100% { opacity: 1; transform: scale(1); } 
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .form-label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; color: #333; }
+        .form-input { width: 100%; padding: 10px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 14px; background: #f8f9fa; }
+        .form-input.filled { background: #e8f5e8 !important; border-color: #4caf50 !important; }
+        #full-transcript { height: 400px !important; resize: vertical; }
+
+        /* ANIMATIONS */
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body>
@@ -966,24 +916,27 @@ def user_dashboard_page():
                 <span id="active-calls">0 Active Calls</span>
             </div>
             <div>Total Calls: <span id="total-calls">0</span></div>
-            <div id="last-update">Last update: Never <span id="loading" class="refresh-indicator" style="display: none;"></span></div>
+            <div id="last-update">Last update: Never</div>
         </div>
     </div>
     
     <div class="main">
+        <!-- LEFT SIDE: CALLS -->
         <div class="calls-section">
             <h2 class="section-title">Live Conversations</h2>
+            <div class="filters">
+                <button onclick="setFilter('ALL')" class="active">All</button>
+                <button onclick="setFilter('SKIP')">Skip</button>
+                <button onclick="setFilter('MAV')">Mav</button>
+                <button onclick="setFilter('GRAB')">Grab</button>
+                <button onclick="setFilter('OTHERS')">Others</button>
+            </div>
             <div class="calls-list">
-                <div id="calls-container">
-                    <div class="no-calls">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        <h3>Waiting for live calls...</h3>
-                        <p style="margin-top: 10px; color: #999;">Dashboard will update automatically when calls come in</p>
-                    </div>
-                </div>
+                <div id="calls-container"></div>
             </div>
         </div>
         
+        <!-- RIGHT SIDE: DETAILS -->
         <div class="form-section">
             <h2 class="section-title">Call Details</h2>
             <div id="no-selection" style="text-align: center; color: #666; padding: 40px;">
@@ -991,217 +944,106 @@ def user_dashboard_page():
                 <p>Click on a call to view details</p>
             </div>
             <div id="call-details-form" style="display: none;">
-                <div class="form-group">
-                    <label class="form-label">Call ID</label>
-                    <input type="text" class="form-input" id="call-id" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Customer Name</label>
-                    <input type="text" class="form-input" id="customer-name" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Phone Number</label>
-                    <input type="text" class="form-input" id="customer-phone" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Postcode</label>
-                    <input type="text" class="form-input" id="customer-postcode" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Service Type</label>
-                    <input type="text" class="form-input" id="service-type" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Current Stage</label>
-                    <input type="text" class="form-input" id="current-stage" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Price Quote</label>
-                    <input type="text" class="form-input" id="price-quote" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Call Duration</label>
-                    <input type="text" class="form-input" id="call-duration" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Booking Reference</label>
-                    <input type="text" class="form-input" id="booking-ref" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Full Transcript</label>
-                    <textarea class="form-input" id="full-transcript" readonly style="height: 200px; resize: vertical;"></textarea>
-                </div>
+                <div class="form-group"><label class="form-label">Call ID</label><input type="text" class="form-input" id="call-id" readonly></div>
+                <div class="form-group"><label class="form-label">Customer Name</label><input type="text" class="form-input" id="customer-name" readonly></div>
+                <div class="form-group"><label class="form-label">Phone Number</label><input type="text" class="form-input" id="customer-phone" readonly></div>
+                <div class="form-group"><label class="form-label">Postcode</label><input type="text" class="form-input" id="customer-postcode" readonly></div>
+                <div class="form-group"><label class="form-label">Service Type</label><input type="text" class="form-input" id="service-type" readonly></div>
+                <div class="form-group"><label class="form-label">Current Stage</label><input type="text" class="form-input" id="current-stage" readonly></div>
+                <div class="form-group"><label class="form-label">Price Quote</label><input type="text" class="form-input" id="price-quote" readonly></div>
+                <div class="form-group"><label class="form-label">Call Duration</label><input type="text" class="form-input" id="call-duration" readonly></div>
+                <div class="form-group"><label class="form-label">Booking Reference</label><input type="text" class="form-input" id="booking-ref" readonly></div>
+                <div class="form-group"><label class="form-label">Full Transcript</label><textarea class="form-input" id="full-transcript" readonly></textarea></div>
             </div>
         </div>
     </div>
 
     <script>
-        let allCalls = new Map(); // Store all calls by ID for stability
+        let allCalls = new Map();
         let selectedCallId = null;
-        let isLoading = false;
-        let refreshCount = 0;
+        let currentFilter = 'ALL';
 
-        function showLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.style.display = 'inline-block';
-        }
-        
-        function hideLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.style.display = 'none';
+        function setFilter(category) {
+            currentFilter = category;
+            document.querySelectorAll('.filters button').forEach(btn => btn.classList.remove('active'));
+            document.querySelector(`.filters button[onclick="setFilter('${category}')"]`).classList.add('active');
+            updateCallsDisplay();
         }
 
         function loadDashboard() {
-            if (isLoading) return;
-            isLoading = true;
-            refreshCount++;
-            showLoading();
-            
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Update our stable call storage
                         data.data.live_calls.forEach(call => {
+                            // Ensure call.category exists, fallback to OTHERS
+                            call.category = (call.category || 'OTHERS').toUpperCase();
                             allCalls.set(call.id, call);
                         });
-                        
                         updateCallsDisplay();
-                        
-                        // Update header stats without causing flicker
-                        const activeCallsEl = document.getElementById('active-calls');
-                        const totalCallsEl = document.getElementById('total-calls');
-                        const lastUpdateEl = document.getElementById('last-update');
-                        
-                        if (activeCallsEl) activeCallsEl.textContent = `${data.data.active_calls} Active Calls`;
-                        if (totalCallsEl) totalCallsEl.textContent = data.data.total_calls;
-                        if (lastUpdateEl) {
-                            lastUpdateEl.innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
-                        }
-                        
-                        // Refresh selected call details if one is selected
+                        document.getElementById('active-calls').textContent = data.data.active_calls + " Active Calls";
+                        document.getElementById('total-calls').textContent = data.data.total_calls;
+                        document.getElementById('last-update').textContent = "Last update: " + new Date().toLocaleTimeString();
                         if (selectedCallId && allCalls.has(selectedCallId)) {
                             updateCallDetails(allCalls.get(selectedCallId));
                         }
                     }
                 })
-                .catch(error => {
-                    console.error('Dashboard error:', error);
-                    const lastUpdateEl = document.getElementById('last-update');
-                    if (lastUpdateEl) lastUpdateEl.textContent = `Update failed (${refreshCount})`;
-                })
-                .finally(() => {
-                    isLoading = false;
-                    hideLoading();
-                });
         }
-        
+
         function updateCallsDisplay() {
             const container = document.getElementById('calls-container');
-            if (!container) return;
-
-            const calls = Array.from(allCalls.values()).sort((a, b) => 
-                new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-            );
-
+            let calls = Array.from(allCalls.values()).sort((a,b) => new Date(b.timestamp||0) - new Date(a.timestamp||0));
+            if (currentFilter !== 'ALL') {
+                calls = calls.filter(c => (c.category || 'OTHERS') === currentFilter);
+            }
+            container.innerHTML = '';
             if (calls.length === 0) {
-                container.innerHTML = `
-                    <div class="no-calls">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        <h3>Waiting for live calls...</h3>
-                        <p style="margin-top: 10px; color: #999;">Dashboard will update automatically when calls come in</p>
-                    </div>`;
+                container.innerHTML = '<div class="no-calls">No calls in ' + currentFilter + '</div>';
                 return;
             }
-
-            // Clear and rebuild - more stable than trying to update in place
-            container.innerHTML = '';
-            
-            calls.forEach(call => {
-                const callEl = createCallElement(call);
-                container.appendChild(callEl);
-            });
+            calls.forEach(call => container.appendChild(createCallElement(call)));
         }
-        
+
         function createCallElement(call) {
             const callEl = document.createElement('div');
-            callEl.className = "call-item";
-            callEl.id = `call-${call.id}`;
-            
-            if (selectedCallId === call.id) {
-                callEl.classList.add('selected');
-            }
-            
-            const collected_data = call.collected_data || {};
-            const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-            const isActive = call.status === 'active';
-            
+            callEl.className = "call-item" + (selectedCallId === call.id ? " selected" : "");
             callEl.innerHTML = `
-                ${isActive ? '<div class="active-indicator"></div>' : ''}
                 <div class="call-header">
                     <div class="call-id">${call.id}</div>
-                    <div class="call-status">
-                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        <div class="duration">${call.duration || 0}m</div>
+                    <div>
+                        <span class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</span>
+                        <span class="duration">${call.duration || 0}m</span>
                     </div>
                 </div>
                 <div class="call-details">
                     <div class="call-info-row">
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+                        <div><strong>Customer:</strong> ${(call.collected_data?.firstName) || 'N/A'}</div>
+                        <div><strong>Service:</strong> ${(call.collected_data?.service) || 'N/A'}</div>
                     </div>
                     <div class="call-info-row">
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        <div><strong>Phone:</strong> ${collected_data.phone || 'Not provided'}</div>
+                        <div><strong>Postcode:</strong> ${(call.collected_data?.postcode) || 'N/A'}</div>
+                        <div><strong>Phone:</strong> ${(call.collected_data?.phone) || 'N/A'}</div>
                     </div>
-                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                    ${call.booking_ref ? `<div><strong>Booking:</strong> ${call.booking_ref}</div>` : ''}
                 </div>
-                <div class="transcript">${last_message}</div>
-                <div style="font-size: 11px; color: #666; margin-top: 10px; text-align: right;">
-                    Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                </div>
+                <div class="transcript">${(call.history || []).slice(-1)[0] || 'No transcript yet...'}</div>
             `;
-            
-            // Add click handler
-            callEl.addEventListener('click', () => selectCall(call.id));
-            
+            callEl.onclick = () => selectCall(call.id);
             return callEl;
         }
-        
+
         function selectCall(callId) {
-            // Update selected state visually
-            document.querySelectorAll('.call-item').forEach(el => el.classList.remove('selected'));
-            const selectedElement = document.getElementById(`call-${callId}`);
-            if (selectedElement) {
-                selectedElement.classList.add('selected');
-                selectedElement.scrollIntoView({ 
-                    behavior: 'smooth', 
-                    block: 'nearest',
-                    inline: 'nearest'
-                });
-            }
-            
             selectedCallId = callId;
-            
-            // Get call data and update form
-            const callData = allCalls.get(callId);
-            if (callData) {
-                updateCallDetails(callData);
-                
-                // Show form and hide no-selection message
-                const noSelection = document.getElementById('no-selection');
-                const form = document.getElementById('call-details-form');
-                if (noSelection) noSelection.style.display = 'none';
-                if (form) form.style.display = 'block';
-            }
+            document.querySelectorAll('.call-item').forEach(el => el.classList.remove('selected'));
+            document.getElementById('call-details-form').style.display = 'block';
+            document.getElementById('no-selection').style.display = 'none';
+            if (allCalls.has(callId)) updateCallDetails(allCalls.get(callId));
+            const el = document.querySelector(`#calls-container #call-${callId}`);
+            if (el) el.classList.add('selected');
         }
-        
+
         function updateCallDetails(callData) {
-            if (!callData) return;
-            
             const collected = callData.collected_data || {};
-            
             const formFields = {
                 'call-id': callData.id || '',
                 'customer-name': collected.firstName || '',
@@ -1210,55 +1052,25 @@ def user_dashboard_page():
                 'service-type': collected.service || '',
                 'current-stage': callData.stage || '',
                 'price-quote': callData.price || '',
-                'call-duration': `${callData.duration || 0} minutes`,
+                'call-duration': (callData.duration || 0) + ' minutes',
                 'booking-ref': callData.booking_ref || '',
                 'full-transcript': (callData.history || []).join('\\n\\n') || 'No transcript available'
             };
-            
-            Object.entries(formFields).forEach(([fieldId, value]) => {
-                const input = document.getElementById(fieldId);
-                if (input) {
-                    input.value = value;
-                    input.classList.toggle('filled', !!value && value.trim() !== '');
-                }
+            Object.entries(formFields).forEach(([id, val]) => {
+                const el = document.getElementById(id);
+                if (el) { el.value = val; el.classList.toggle('filled', !!val.trim()); }
             });
         }
-        
-        // Initialize dashboard
+
         document.addEventListener('DOMContentLoaded', () => {
             loadDashboard();
-            
-            // Refresh every 5 seconds but only if not loading
-            setInterval(() => {
-                if (!isLoading) {
-                    loadDashboard();
-                }
-            }, 500);
-            
-            // Update durations every second for selected call
-            setInterval(() => {
-                if (selectedCallId && allCalls.has(selectedCallId)) {
-                    const call = allCalls.get(selectedCallId);
-                    const durationInput = document.getElementById('call-duration');
-                    if (durationInput && call.timestamp) {
-                        const startTime = new Date(call.timestamp);
-                        const currentDuration = Math.round((new Date() - startTime) / 1000 / 60);
-                        durationInput.value = `${currentDuration} minutes`;
-                        
-                        // Update duration in the call item too
-                        const callElement = document.getElementById(`call-${selectedCallId}`);
-                        if (callElement) {
-                            const durationEl = callElement.querySelector('.duration');
-                            if (durationEl) durationEl.textContent = `${currentDuration}m`;
-                        }
-                    }
-                }
-            }, 1000);
+            setInterval(loadDashboard, 5000);
         });
     </script>
 </body>
 </html>
 """)
+
 
 @app.route('/dashboard/manager')
 def manager_dashboard_page():
