@@ -9,13 +9,18 @@ from openai import OpenAI
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for
 from flask_cors import CORS
 
-# API Integration - No fallback dummy functions
+# API Integration
 try:
     from utils.wasteking_api import complete_booking, create_booking, get_pricing, create_payment_link
     API_AVAILABLE = True
 except ImportError:
     API_AVAILABLE = False
-    print("WARNING: Live wasteking_api module not found. API calls will fail.")
+    print("WARNING: Live wasteking_api module not found. The system cannot process bookings.")
+    print("API calls will fail gracefully, routing customers to a human agent.")
+    def create_booking(): return {'success': False, 'error': 'API unavailable'}
+    def get_pricing(*args, **kwargs): return {'success': False, 'error': 'API unavailable'}
+    def complete_booking(*args, **kwargs): return {'success': False, 'error': 'API unavailable'}
+    def create_payment_link(*args, **kwargs): return {'success': False, 'error': 'API unavailable'}
 
 # --- HARDCODED BUSINESS RULES ---
 OFFICE_HOURS = {
@@ -24,8 +29,6 @@ OFFICE_HOURS = {
     'saturday': {'start': 9, 'end': 12},
     'sunday': 'closed'
 }
-
-SUPPLIER_PHONE = '+447394642517'
 
 TRANSFER_RULES = {
     'management_director': {
@@ -161,7 +164,7 @@ GRAB_RULES = {
 }
 
 SMS_NOTIFICATION = '+447823656762'
-SURCHARGE_ITEMS = { }
+SURCHARGE_ITEMS = {  }
 REQUIRED_FIELDS = {
     'skip': ['firstName', 'postcode', 'phone'],
     'mav': ['firstName', 'postcode', 'phone'],
@@ -187,12 +190,14 @@ def is_business_hours():
     return False
 
 def send_webhook(conversation_id, data, reason):
-
-    customer_data = state['collected_data']
-    requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json={"CUSTOMER_DATA":CUSTOMER_DATA}, timeout=5)
-    print(f"Webhook sent successfully for {reason}: {conversation_id}")
-    return True
-
+    try:
+        customer_data = state['collected_data']
+        requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json={"data" : customer_data}, timeout=5)
+        print(f"Webhook sent successfully for {reason}: {conversation_id}")
+        return True
+    except Exception as e:
+        print(f"Webhook failed for {conversation_id}: {e}")
+        return False
 
 def send_sms(name, phone, booking_ref, price, payment_link):
     try:
@@ -205,66 +210,9 @@ def send_sms(name, phone, booking_ref, price, payment_link):
             formatted_phone = f"+44{phone[1:]}" if phone.startswith('0') else phone
             message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
             client.messages.create(body=message, from_=twilio_phone, to=formatted_phone)
-            print(f"SMS sent to {phone}")
+            print(f"✅ SMS sent to {phone}")
     except Exception as e:
-        print(f"SMS error: {e}")
-
-def call_supplier_for_availability(customer_data, booking_ref):
-    """
-    Call the supplier at +447394642517 to confirm availability.
-    COMMENTED OUT FOR NOW - Will be implemented later
-    """
-    # TODO: Implement actual supplier calling
-    # try:
-    #     twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
-    #     twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
-    #     twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
-    #     
-    #     if not (twilio_sid and twilio_token and twilio_phone):
-    #         print(f"Missing Twilio credentials for supplier call")
-    #         return False
-    #     
-    #     from twilio.rest import Client
-    #     client = Client(twilio_sid, twilio_token)
-    #     
-    #     # Log the call attempt
-    #     supplier_data = {
-    #         "supplier_phone": SUPPLIER_PHONE,
-    #         "customer_name": customer_data.get('firstName', 'Unknown'),
-    #         "postcode": customer_data.get('postcode', 'Unknown'),
-    #         "service": customer_data.get('service', 'Unknown'),
-    #         "type": customer_data.get('type', 'Unknown'),
-    #         "booking_ref": booking_ref,
-    #         "call_time": datetime.now().isoformat()
-    #     }
-    #     
-    #     print(f"Calling supplier {SUPPLIER_PHONE} to confirm availability for booking {booking_ref}")
-    #     print(f"Customer: {customer_data.get('firstName')} at {customer_data.get('postcode')}")
-    #     
-    #     # Make the actual call using Twilio Voice
-    #     # This would require a TwiML app or webhook to handle the call flow
-    #     call = client.calls.create(
-    #         to=SUPPLIER_PHONE,
-    #         from_=twilio_phone,
-    #         url=os.getenv('TWILIO_VOICE_WEBHOOK_URL')  # Must be configured
-    #     )
-    #     
-    #     if call.sid:
-    #         print(f"Supplier call initiated with SID: {call.sid}")
-    #         # In real implementation, you'd need to wait for call completion
-    #         # and parse the result from your TwiML webhook
-    #         return True
-    #     else:
-    #         print(f"Failed to initiate supplier call")
-    #         return False
-    #         
-    # except Exception as e:
-    #     print(f"Error calling supplier: {e}")
-    #     return False
-    
-    # For now, just proceed without supplier call
-    print(f"Supplier call skipped for booking {booking_ref}")
-    return True
+        print(f"❌ SMS error: {e}")
 
 # --- HELPER CLASSES ---
 class OpenAIQuestionValidator:
@@ -297,59 +245,27 @@ class OpenAIQuestionValidator:
 class DashboardManager:
     def __init__(self):
         self.live_calls = {}
-        self.call_start_times = {}
-    
-    def start_call(self, conversation_id):
-        """Record when a call starts"""
-        if conversation_id not in self.call_start_times:
-            self.call_start_times[conversation_id] = datetime.now()
-    
-    def get_call_duration(self, conversation_id):
-        """Get duration of a call in minutes"""
-        if conversation_id in self.call_start_times:
-            start_time = self.call_start_times[conversation_id]
-            duration = (datetime.now() - start_time).total_seconds() / 60
-            return round(duration)
-        return 0
     
     def update_call(self, conversation_id, data):
-        self.start_call(conversation_id)
-        
         status = 'active' if data.get('stage') not in ['completed', 'transfer_completed'] else 'completed'
         
         existing_call = self.live_calls.get(conversation_id, {})
-        
         merged_data = {
             'id': conversation_id,
-            'timestamp': existing_call.get('timestamp', self.call_start_times.get(conversation_id, datetime.now()).isoformat()),
+            'timestamp': existing_call.get('timestamp', datetime.now().isoformat()),
             'stage': data.get('stage', existing_call.get('stage', 'unknown')),
             'collected_data': {**existing_call.get('collected_data', {}), **data.get('collected_data', {})},
             'history': data.get('history', existing_call.get('history', [])),
             'price': data.get('price', existing_call.get('price')),
-            'booking_ref': data.get('booking_ref', existing_call.get('booking_ref')),
-            'status': status,
-            'duration': self.get_call_duration(conversation_id)
+            'status': status
         }
-        
-        if existing_call != merged_data:
-            self.live_calls[conversation_id] = merged_data
-    
-    def get_call_by_id(self, conversation_id):
-        """Get specific call data by ID"""
-        return self.live_calls.get(conversation_id)
+        self.live_calls[conversation_id] = merged_data
     
     def get_user_dashboard_data(self):
         active_calls = [call for call in self.live_calls.values() if call['status'] == 'active']
-        
-        sorted_calls = sorted(
-            self.live_calls.values(), 
-            key=lambda x: x.get('timestamp', ''), 
-            reverse=True
-        )
-        
         return {
             'active_calls': len(active_calls),
-            'live_calls': sorted_calls[:20],
+            'live_calls': list(self.live_calls.values())[-10:] if self.live_calls else [],
             'timestamp': datetime.now().isoformat(),
             'total_calls': len(self.live_calls),
             'has_data': len(self.live_calls) > 0
@@ -371,7 +287,7 @@ class DashboardManager:
             'service_breakdown': services,
             'timestamp': datetime.now().isoformat(),
             'individual_calls': list(self.live_calls.values()),
-            'recent_calls': sorted(self.live_calls.values(), key=lambda x: x.get('timestamp', ''), reverse=True)[:20],
+            'recent_calls': list(self.live_calls.values())[-20:],
             'active_calls': [call for call in self.live_calls.values() if call['status'] == 'active']
         }
 
@@ -381,13 +297,7 @@ class BaseAgent:
         self.conversations = {}
 
     def process_message(self, message, conversation_id):
-        state = self.conversations.get(conversation_id, {
-            'history': [], 
-            'collected_data': {}, 
-            'stage': 'initial',
-            'call_start_time': datetime.now().isoformat()
-        })
-        
+        state = self.conversations.get(conversation_id, {'history': [], 'collected_data': {}, 'stage': 'initial'})
         state['history'].append(f"Customer: {message}")
         
         special_response = self.check_special_rules(message, state)
@@ -476,8 +386,6 @@ class BaseAgent:
             return 'completed'
         if "unable to get pricing" in response.lower() or "technical issue" in response.lower() or "connect you with our team" in response.lower():
             return 'transfer_completed'
-        if "calling our supplier" in response.lower():
-            return 'confirming_availability'
         if "Would you like to book this?" in response:
             return 'booking'
         if "What's your name?" in response or "What's your complete postcode?" in response or "What's the best phone number to contact you on?" in response:
@@ -549,16 +457,6 @@ class BaseAgent:
             customer_data['price'] = state['price']
             customer_data['booking_ref'] = state['booking_ref']
             
-            # Call supplier for availability confirmation
-            state['stage'] = 'confirming_availability'
-            self.conversations[conversation_id] = state
-            
-            availability_confirmed = call_supplier_for_availability(customer_data, state['booking_ref'])
-            
-            if not availability_confirmed:
-                send_webhook(conversation_id, state, 'supplier_unavailable')
-                return "I've checked with our supplier and unfortunately we don't have availability for that date. Let me put you through to our team who can find alternative dates for you."
-            
             result = complete_booking(customer_data)
             
             if result.get('success'):
@@ -567,13 +465,12 @@ class BaseAgent:
                 payment_link = result.get('payment_link')
                 
                 state['booking_completed'] = True
-                state['supplier_confirmed'] = True
                 self.conversations[conversation_id] = state
                 
                 if payment_link and customer_data.get('phone'):
                     send_sms(customer_data['firstName'], customer_data['phone'], booking_ref, price, payment_link)
                 
-                response = f"Our supplier has confirmed availability. Booking confirmed! Ref: {booking_ref}, Price: {price}."
+                response = f"Booking confirmed! Ref: {booking_ref}, Price: {price}."
                 if payment_link:
                     response += " A payment link has been sent to your phone."
                 
@@ -617,13 +514,11 @@ class SkipAgent(BaseAgent):
             return self.get_pricing(state, conversation_id, wants_to_book)
         
         if wants_to_book and state.get('price'):
-            if state.get('stage') == 'confirming_availability':
-                return "I'm currently calling our supplier to confirm availability. Please hold on..."
             return self.complete_booking(state, conversation_id)
         
         if 'plasterboard' in message.lower(): return SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
         if any(item in message.lower() for item in ['fridge', 'mattress', 'freezer']): return SKIP_HIRE_RULES['A5_prohibited_items']['restrictions_response']
-        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return "The following items may not be permitted in skips"
+        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return "These can't be kept in skip, sorry"
         if any(phrase in message.lower() for phrase in ['what cannot put', 'what can\'t put', 'prohibited', 'not allowed']):
             prohibited_items = ', '.join(SKIP_HIRE_RULES['A5_prohibited_items']['prohibited_list'])
             return f"The following items may not be permitted in skips, or may carry a surcharge: {prohibited_items}"
@@ -653,8 +548,6 @@ class MAVAgent(BaseAgent):
             return self.get_pricing(state, conversation_id, wants_to_book)
 
         if wants_to_book and state.get('price'):
-            if state.get('stage') == 'confirming_availability':
-                return "I'm currently calling our supplier to confirm availability. Please hold on..."
             return self.complete_booking(state, conversation_id)
 
         if state.get('price'):
@@ -683,8 +576,6 @@ class GrabAgent(BaseAgent):
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['grab'])
 
         if wants_to_book and state.get('price'):
-            if state.get('stage') == 'confirming_availability':
-                return "I'm currently calling our supplier to confirm availability. Please hold on..."
             return self.complete_booking(state, conversation_id)
         
         if has_all_required_data and not state.get('price'):
@@ -773,32 +664,11 @@ def process_message_endpoint():
         state = shared_conversations.get(conversation_id, {})
         dashboard_manager.update_call(conversation_id, state)
         
-        return jsonify({
-            "success": True, 
-            "message": response, 
-            "conversation_id": conversation_id, 
-            "timestamp": datetime.now().isoformat(), 
-            'stage': state.get('stage'), 
-            'price': state.get('price'),
-            'booking_ref': state.get('booking_ref'),
-            'supplier_confirmed': state.get('supplier_confirmed', False)
-        })
+        return jsonify({"success": True, "message": response, "conversation_id": conversation_id, "timestamp": datetime.now().isoformat(), 'stage': state.get('stage'), 'price': state.get('price')})
         
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "message": "I'll connect you with our team who can help immediately.", "error": str(e)}), 500
-
-@app.route('/api/dashboard/call/<conversation_id>')
-def get_call_details(conversation_id):
-    """Get detailed information for a specific call"""
-    try:
-        call_data = dashboard_manager.get_call_by_id(conversation_id)
-        if call_data:
-            return jsonify({"success": True, "call": call_data})
-        else:
-            return jsonify({"success": False, "error": "Call not found"}), 404
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/dashboard/user')
 def user_dashboard_page():
@@ -810,120 +680,27 @@ def user_dashboard_page():
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f5f6fa; }
-        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 25px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 25px; }
         .header h1 { font-size: 28px; margin-bottom: 10px; }
         .stats { display: flex; gap: 30px; margin-top: 15px; font-size: 14px; }
         .live-dot { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; animation: pulse 2s infinite; }
-        .main { display: grid; grid-template-columns: 1fr 400px; gap: 20px; padding: 20px; margin-top: 120px; }
-        .calls-section, .form-section { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .calls-list { max-height: calc(100vh - 250px); overflow-y: auto; }
-        .call-item { 
-            background: #f8f9fa; 
-            border-radius: 10px; 
-            padding: 20px; 
-            margin-bottom: 15px; 
-            cursor: pointer; 
-            transition: all 0.3s ease;
-            border: 2px solid transparent;
-            position: relative;
-        }
-        .call-item:hover { 
-            background: #e9ecef; 
-            transform: translateY(-2px); 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        .call-item.selected { 
-            background: #e3f2fd !important; 
-            border: 2px solid #2196f3 !important;
-            transform: translateY(-2px);
-        }
+        .main { display: grid; grid-template-columns: 1fr 350px; gap: 20px; padding: 20px; }
+        .calls-section, .form-section { background: white; border-radius: 15px; padding: 25px; }
+        .call-item { background: #f8f9fa; border-radius: 10px; padding: 20px; margin-bottom: 15px; cursor: pointer; }
         .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .call-id { font-weight: bold; color: #667eea; font-size: 16px; }
-        .call-status { display: flex; align-items: center; gap: 8px; }
-        .stage { 
-            padding: 4px 12px; 
-            border-radius: 20px; 
-            font-size: 11px; 
-            font-weight: bold; 
-            text-transform: uppercase;
-            white-space: nowrap;
-        }
+        .call-id { font-weight: bold; color: #667eea; }
+        .stage { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
         .stage-collecting_info { background: #fff3cd; color: #856404; }
         .stage-booking { background: #d4edda; color: #155724; }
-        .stage-confirming_availability { background: #ffeaa7; color: #856404; }
         .stage-completed { background: #cce7ff; color: #004085; }
         .stage-transfer_completed { background: #e2e3e5; color: #495057; }
-        .stage-processing { background: #f0f0f0; color: #666; }
-        .duration { 
-            font-size: 12px; 
-            color: #fff; 
-            background: #667eea; 
-            padding: 4px 8px; 
-            border-radius: 12px; 
-            font-weight: bold;
-        }
-        .call-details { margin: 10px 0; }
-        .call-details div { margin: 4px 0; font-size: 14px; }
-        .transcript { 
-            background: white; 
-            padding: 12px; 
-            border-radius: 8px; 
-            max-height: 80px; 
-            overflow-y: auto; 
-            font-size: 12px; 
-            margin-top: 10px;
-            border: 1px solid #e0e0e0;
-        }
-        .form-section { position: sticky; top: 140px; }
+        .transcript { background: white; padding: 15px; border-radius: 8px; max-height: 100px; overflow-y: auto; font-size: 13px; margin-top: 10px; }
         .form-group { margin-bottom: 15px; }
-        .form-label { 
-            display: block; 
-            margin-bottom: 5px; 
-            font-weight: bold; 
-            font-size: 14px; 
-            color: #333;
-        }
-        .form-input { 
-            width: 100%; 
-            padding: 10px; 
-            border: 2px solid #e9ecef; 
-            border-radius: 8px;
-            font-size: 14px;
-            background: #f8f9fa;
-        }
-        .form-input.filled { 
-            background: #e8f5e8 !important; 
-            border-color: #4caf50 !important; 
-        }
+        .form-label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        .form-input { width: 100%; padding: 10px; border: 2px solid #e9ecef; border-radius: 8px; }
+        .form-input.filled { background: #e8f5e8; border-color: #4caf50; }
         .no-calls { text-align: center; padding: 60px; color: #666; }
-        .refresh-indicator { 
-            display: inline-block; 
-            width: 12px; 
-            height: 12px; 
-            border: 2px solid #ccc; 
-            border-top: 2px solid #667eea; 
-            border-radius: 50%; 
-            animation: spin 1s linear infinite; 
-            margin-left: 10px; 
-        }
-        .section-title { font-size: 20px; font-weight: bold; margin-bottom: 20px; color: #333; }
-        .call-info-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 8px 0; }
-        .active-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 10px;
-            height: 10px;
-            background: #4caf50;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse { 
-            0% { opacity: 1; transform: scale(1); } 
-            50% { opacity: 0.5; transform: scale(1.2); } 
-            100% { opacity: 1; transform: scale(1); } 
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -934,296 +711,146 @@ def user_dashboard_page():
                 <div class="live-dot"></div>
                 <span id="active-calls">0 Active Calls</span>
             </div>
-            <div>Total Calls: <span id="total-calls">0</span></div>
-            <div id="last-update">Last update: Never <span id="loading" class="refresh-indicator" style="display: none;"></span></div>
+            <div id="last-update">Last update: Never</div>
         </div>
     </div>
     
     <div class="main">
         <div class="calls-section">
-            <h2 class="section-title">Live Conversations</h2>
-            <div class="calls-list">
-                <div id="calls-container">
-                    <div class="no-calls">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        <h3>Waiting for live calls...</h3>
-                        <p style="margin-top: 10px; color: #999;">Dashboard will update automatically when calls come in</p>
-                    </div>
+            <h2 style="margin-bottom: 20px;">Live Conversations</h2>
+            <div id="calls-container">
+                <div class="no-calls">
+                    <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
+                    Waiting for live calls...
                 </div>
             </div>
         </div>
         
         <div class="form-section">
-            <h2 class="section-title">Call Details</h2>
-            <div id="no-selection" style="text-align: center; color: #666; padding: 40px;">
-                <div style="font-size: 32px; margin-bottom: 15px;">👈</div>
-                <p>Click on a call to view details</p>
+            <h2 style="margin-bottom: 20px;">Auto-Extracted Data</h2>
+            <div class="form-group">
+                <label class="form-label">Customer Name</label>
+                <input type="text" class="form-input" id="customer-name" readonly>
             </div>
-            <div id="call-details-form" style="display: none;">
-                <div class="form-group">
-                    <label class="form-label">Call ID</label>
-                    <input type="text" class="form-input" id="call-id" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Customer Name</label>
-                    <input type="text" class="form-input" id="customer-name" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Phone Number</label>
-                    <input type="text" class="form-input" id="customer-phone" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Postcode</label>
-                    <input type="text" class="form-input" id="customer-postcode" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Service Type</label>
-                    <input type="text" class="form-input" id="service-type" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Current Stage</label>
-                    <input type="text" class="form-input" id="current-stage" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Price Quote</label>
-                    <input type="text" class="form-input" id="price-quote" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Call Duration</label>
-                    <input type="text" class="form-input" id="call-duration" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Booking Reference</label>
-                    <input type="text" class="form-input" id="booking-ref" readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Full Transcript</label>
-                    <textarea class="form-input" id="full-transcript" readonly style="height: 200px; resize: vertical;"></textarea>
-                </div>
+            <div class="form-group">
+                <label class="form-label">Phone Number</label>
+                <input type="text" class="form-input" id="customer-phone" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Postcode</label>
+                <input type="text" class="form-input" id="customer-postcode" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Service Type</label>
+                <input type="text" class="form-input" id="service-type" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Current Stage</label>
+                <input type="text" class="form-input" id="current-stage" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Price Quote</label>
+                <input type="text" class="form-input" id="price-quote" readonly>
+            </div>
+             <div class="form-group">
+                <label class="form-label">Transcript</label>
+                <textarea class="form-input" id="full-transcript" readonly style="height: 200px;"></textarea>
             </div>
         </div>
     </div>
 
     <script>
-        let allCalls = new Map(); // Store all calls by ID for stability
-        let selectedCallId = null;
-        let isLoading = false;
-        let refreshCount = 0;
-
-        function showLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.style.display = 'inline-block';
-        }
-        
-        function hideLoading() {
-            const loading = document.getElementById('loading');
-            if (loading) loading.style.display = 'none';
-        }
+        let lastKnownCalls = [];
 
         function loadDashboard() {
-            if (isLoading) return;
-            isLoading = true;
-            refreshCount++;
-            showLoading();
-            
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Update our stable call storage
-                        data.data.live_calls.forEach(call => {
-                            allCalls.set(call.id, call);
-                        });
-                        
-                        updateCallsDisplay();
-                        
-                        // Update header stats without causing flicker
-                        const activeCallsEl = document.getElementById('active-calls');
-                        const totalCallsEl = document.getElementById('total-calls');
-                        const lastUpdateEl = document.getElementById('last-update');
-                        
-                        if (activeCallsEl) activeCallsEl.textContent = `${data.data.active_calls} Active Calls`;
-                        if (totalCallsEl) totalCallsEl.textContent = data.data.total_calls;
-                        if (lastUpdateEl) {
-                            lastUpdateEl.innerHTML = `Last update: ${new Date().toLocaleTimeString()} <span id="loading" class="refresh-indicator" style="display: none;"></span>`;
-                        }
-                        
-                        // Refresh selected call details if one is selected
-                        if (selectedCallId && allCalls.has(selectedCallId)) {
-                            updateCallDetails(allCalls.get(selectedCallId));
-                        }
+                        lastKnownCalls = data.data.live_calls;
+                        updateCallsDisplay(lastKnownCalls);
+                        document.getElementById('active-calls').textContent = `${data.data.active_calls} Active Calls`;
+                        document.getElementById('last-update').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
                     }
                 })
-                .catch(error => {
-                    console.error('Dashboard error:', error);
-                    const lastUpdateEl = document.getElementById('last-update');
-                    if (lastUpdateEl) lastUpdateEl.textContent = `Update failed (${refreshCount})`;
-                })
-                .finally(() => {
-                    isLoading = false;
-                    hideLoading();
-                });
+                .catch(error => console.error('Dashboard error:', error));
         }
         
-        function updateCallsDisplay() {
-            const container = document.getElementById('calls-container');
-            if (!container) return;
+        function updateCallsDisplay(calls) {
+    const container = document.getElementById('calls-container');
 
-            const calls = Array.from(allCalls.values()).sort((a, b) => 
-                new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-            );
+    // if no calls at all and never had calls before
+    if ((!calls || calls.length === 0) && lastKnownCalls.length === 0) {
+        container.innerHTML = `
+            <div class="no-calls">
+                <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
+                Waiting for live calls...
+            </div>`;
+        return;
+    }
 
-            if (calls.length === 0) {
-                container.innerHTML = `
-                    <div class="no-calls">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
-                        <h3>Waiting for live calls...</h3>
-                        <p style="margin-top: 10px; color: #999;">Dashboard will update automatically when calls come in</p>
-                    </div>`;
-                return;
-            }
-
-            // Clear and rebuild - more stable than trying to update in place
-            container.innerHTML = '';
-            
-            calls.forEach(call => {
-                const callEl = createCallElement(call);
-                container.appendChild(callEl);
-            });
-        }
-        
-        function createCallElement(call) {
-            const callEl = document.createElement('div');
+    // update without wiping entire container
+    calls.forEach(call => {
+        let callEl = document.getElementById(`call-${call.id}`);
+        if (!callEl) {
+            // create a new element if it doesn't exist
+            callEl = document.createElement('div');
             callEl.className = "call-item";
             callEl.id = `call-${call.id}`;
-            
-            if (selectedCallId === call.id) {
-                callEl.classList.add('selected');
-            }
-            
-            const collected_data = call.collected_data || {};
-            const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-            const isActive = call.status === 'active';
-            
-            callEl.innerHTML = `
-                ${isActive ? '<div class="active-indicator"></div>' : ''}
-                <div class="call-header">
-                    <div class="call-id">${call.id}</div>
-                    <div class="call-status">
-                        <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        <div class="duration">${call.duration || 0}m</div>
-                    </div>
-                </div>
-                <div class="call-details">
-                    <div class="call-info-row">
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                    </div>
-                    <div class="call-info-row">
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        <div><strong>Phone:</strong> ${collected_data.phone || 'Not provided'}</div>
-                    </div>
-                    ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                    ${call.booking_ref ? `<div><strong>Booking:</strong> ${call.booking_ref}</div>` : ''}
-                </div>
-                <div class="transcript">${last_message}</div>
-                <div style="font-size: 11px; color: #666; margin-top: 10px; text-align: right;">
-                    Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                </div>
-            `;
-            
-            // Add click handler
-            callEl.addEventListener('click', () => selectCall(call.id));
-            
-            return callEl;
+            container.prepend(callEl); // newest first
         }
+        const collected_data = call.collected_data || {};
+        const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
+        callEl.innerHTML = `
+            <div class="call-header">
+                <div class="call-id">${call.id}</div>
+                <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+            </div>
+            <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+            <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+            <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+            ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+            <div class="transcript">${last_message}</div>
+            <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+            </div>
+        `;
+    });
+
+    // remove calls that no longer exist
+    [...container.children].forEach(child => {
+        if (child.id && !calls.some(c => `call-${c.id}` === child.id)) {
+            container.removeChild(child);
+        }
+    });
+}
+
         
         function selectCall(callId) {
-            // Update selected state visually
-            document.querySelectorAll('.call-item').forEach(el => el.classList.remove('selected'));
-            const selectedElement = document.getElementById(`call-${callId}`);
-            if (selectedElement) {
-                selectedElement.classList.add('selected');
-                selectedElement.scrollIntoView({ 
-                    behavior: 'smooth', 
-                    block: 'nearest',
-                    inline: 'nearest'
-                });
+            const callData = lastKnownCalls.find(call => call.id === callId);
+            if (!callData) {
+                console.error("Call data not found for ID:", callId);
+                return;
             }
-            
-            selectedCallId = callId;
-            
-            // Get call data and update form
-            const callData = allCalls.get(callId);
-            if (callData) {
-                updateCallDetails(callData);
-                
-                // Show form and hide no-selection message
-                const noSelection = document.getElementById('no-selection');
-                const form = document.getElementById('call-details-form');
-                if (noSelection) noSelection.style.display = 'none';
-                if (form) form.style.display = 'block';
-            }
-        }
-        
-        function updateCallDetails(callData) {
-            if (!callData) return;
-            
             const collected = callData.collected_data || {};
             
-            const formFields = {
-                'call-id': callData.id || '',
-                'customer-name': collected.firstName || '',
-                'customer-phone': collected.phone || '',
-                'customer-postcode': collected.postcode || '',
-                'service-type': collected.service || '',
-                'current-stage': callData.stage || '',
-                'price-quote': callData.price || '',
-                'call-duration': `${callData.duration || 0} minutes`,
-                'booking-ref': callData.booking_ref || '',
-                'full-transcript': (callData.history || []).join('\\n\\n') || 'No transcript available'
-            };
+            document.getElementById('customer-name').value = collected.firstName || '';
+            document.getElementById('customer-phone').value = collected.phone || '';
+            document.getElementById('customer-postcode').value = collected.postcode || '';
+            document.getElementById('service-type').value = collected.service || '';
+            document.getElementById('current-stage').value = callData.stage || '';
+            document.getElementById('price-quote').value = callData.price || '';
+            document.getElementById('full-transcript').value = (callData.history || []).join('\\n');
             
-            Object.entries(formFields).forEach(([fieldId, value]) => {
+            const fields = ['customer-name', 'customer-phone', 'customer-postcode', 'service-type', 'current-stage', 'price-quote'];
+            fields.forEach(fieldId => {
                 const input = document.getElementById(fieldId);
-                if (input) {
-                    input.value = value;
-                    input.classList.toggle('filled', !!value && value.trim() !== '');
-                }
+                input.classList.toggle('filled', !!input.value);
             });
         }
         
-        // Initialize dashboard
-        document.addEventListener('DOMContentLoaded', () => {
-            loadDashboard();
-            
-            // Refresh every 5 seconds but only if not loading
-            setInterval(() => {
-                if (!isLoading) {
-                    loadDashboard();
-                }
-            }, 500);
-            
-            // Update durations every second for selected call
-            setInterval(() => {
-                if (selectedCallId && allCalls.has(selectedCallId)) {
-                    const call = allCalls.get(selectedCallId);
-                    const durationInput = document.getElementById('call-duration');
-                    if (durationInput && call.timestamp) {
-                        const startTime = new Date(call.timestamp);
-                        const currentDuration = Math.round((new Date() - startTime) / 1000 / 60);
-                        durationInput.value = `${currentDuration} minutes`;
-                        
-                        // Update duration in the call item too
-                        const callElement = document.getElementById(`call-${selectedCallId}`);
-                        if (callElement) {
-                            const durationEl = callElement.querySelector('.duration');
-                            if (durationEl) durationEl.textContent = `${currentDuration}m`;
-                        }
-                    }
-                }
-            }, 1000);
-        });
+        document.addEventListener('DOMContentLoaded', loadDashboard);
+        setInterval(loadDashboard, 2000);
     </script>
 </body>
 </html>
@@ -1261,21 +888,15 @@ def manager_dashboard_page():
         .perf-excellent { background: #28a745; }
         .perf-good { background: #ffc107; }
         .perf-poor { background: #dc3545; }
-        .supplier-indicator { background: #17a2b8; }
-        .loading-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #f3f3f3; border-top: 2px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>Manager Analytics Dashboard</h1>
-        <p>Real-time insights with supplier confirmation tracking</p>
+        <p>Real-time insights with individual call details and webhook tracking</p>
     </div>
     
-    <button class="refresh-btn" onclick="loadAnalytics()">
-        <span id="refresh-text">Refresh</span>
-        <span id="refresh-spinner" class="loading-spinner" style="display: none; margin-left: 8px;"></span>
-    </button>
+    <button class="refresh-btn" onclick="loadAnalytics()">Refresh</button>
     
     <div class="main">
         <div class="metrics-section">
@@ -1314,15 +935,7 @@ def manager_dashboard_page():
     </div>
 
     <script>
-        let isLoadingAnalytics = false;
-        
         function loadAnalytics() {
-            if (isLoadingAnalytics) return;
-            isLoadingAnalytics = true;
-            
-            document.getElementById('refresh-text').textContent = 'Loading...';
-            document.getElementById('refresh-spinner').style.display = 'inline-block';
-            
             fetch('/api/dashboard/manager')
                 .then(response => response.json())
                 .then(data => {
@@ -1351,11 +964,6 @@ def manager_dashboard_page():
                 })
                 .catch(error => {
                     console.error('Analytics error:', error);
-                })
-                .finally(() => {
-                    isLoadingAnalytics = false;
-                    document.getElementById('refresh-text').textContent = 'Refresh';
-                    document.getElementById('refresh-spinner').style.display = 'none';
                 });
         }
         
@@ -1368,17 +976,8 @@ def manager_dashboard_page():
             
             const callsHTML = calls.slice().reverse().map(call => {
                 const statusClass = call.status === 'active' ? 'status-active' : call.status === 'completed' ? 'status-completed' : 'status-transfer_completed';
-                
-                let perfIndicator = 'perf-poor';
-                if (call.status === 'completed' && call.price) {
-                    perfIndicator = call.supplier_confirmed ? 'perf-excellent' : 'perf-good';
-                } else if (call.status === 'active') {
-                    perfIndicator = 'perf-good';
-                } else if (call.stage === 'confirming_availability') {
-                    perfIndicator = 'supplier-indicator';
-                }
-                
-                const duration = call.duration || 0;
+                const perfIndicator = call.status === 'completed' && call.price ? 'perf-excellent' : call.status === 'active' ? 'perf-good' : 'perf-poor';
+                const duration = call.timestamp ? Math.round((new Date() - new Date(call.timestamp)) / 1000 / 60) : 0;
                 const collected = call.collected_data || {};
                 
                 return `
@@ -1387,7 +986,6 @@ def manager_dashboard_page():
                             <div class="call-id">
                                 <span class="performance-indicator ${perfIndicator}"></span>
                                 ${call.id}
-                                ${call.supplier_confirmed ? ' ✓ Supplier Confirmed' : ''}
                             </div>
                             <div class="call-status ${statusClass}">${call.status}</div>
                         </div>
@@ -1397,7 +995,6 @@ def manager_dashboard_page():
                             <strong>Postcode:</strong> ${collected.postcode || 'Not provided'}
                             ${call.price ? `<br><strong>Price:</strong> ${call.price}` : ''}
                             ${call.booking_ref ? `<br><strong>Booking:</strong> ${call.booking_ref}` : ''}
-                            ${call.stage === 'confirming_availability' ? '<br><strong>Status:</strong> Calling supplier for availability' : ''}
                         </div>
                         <div class="call-metrics">
                             <div><strong>Duration:</strong> ${duration}m</div>
@@ -1405,7 +1002,7 @@ def manager_dashboard_page():
                             <div><strong>Messages:</strong> ${(call.history || []).length}</div>
                         </div>
                         <div style="font-size: 11px; color: #999; margin-top: 8px;">
-                            Started: ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
                         </div>
                     </div>
                 `;
@@ -1414,14 +1011,8 @@ def manager_dashboard_page():
             container.innerHTML = callsHTML;
         }
         
-        document.addEventListener('DOMContentLoaded', () => {
-            loadAnalytics();
-            setInterval(() => {
-                if (!isLoadingAnalytics) {
-                    loadAnalytics();
-                }
-            }, 5000);
-        });
+        document.addEventListener('DOMContentLoaded', loadAnalytics);
+        setInterval(loadAnalytics, 15000);
     </script>
 </body>
 </html>
@@ -1443,17 +1034,11 @@ def test_interface_page():
         .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
         .success { background: #d4edda; border: 1px solid #c3e6cb; }
         .error { background: #f8d7da; border: 1px solid #f5c6cb; }
-        .supplier-call { background: #cce7ff; border: 1px solid #004085; }
-        .warning { background: #fff3cd; border: 1px solid #856404; color: #856404; padding: 15px; border-radius: 5px; margin: 15px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>WasteKing System Test</h1>
-        
-        <div class="warning">
-            <strong>Note:</strong> Supplier calling requires Twilio Voice API configuration. Set TWILIO_VOICE_WEBHOOK_URL environment variable for real calls.
-        </div>
         
         <h3>Test Messages</h3>
         <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
@@ -1509,14 +1094,8 @@ def test_interface_page():
             .then(data => {
                 if (data.success) {
                     currentConversationId = data.conversation_id;
-                    
-                    let responseClass = 'response success';
-                    if (data.stage === 'confirming_availability') {
-                        responseClass = 'response supplier-call';
-                    }
-                    
-                    responseDiv.className = responseClass;
-                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nBooking Ref: ${data.booking_ref || 'N/A'}\nSupplier Confirmed: ${data.supplier_confirmed ? 'Yes' : 'No'}\nConversation ID: ${data.conversation_id}`;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
                 } else {
                     responseDiv.className = 'response error';
                     responseDiv.textContent = `Error: ${data.message}`;
@@ -1558,49 +1137,30 @@ def test_interface_page():
                     const data = await response.json();
                     currentConversationId = data.conversation_id;
                     
-                    let resultClass = '';
-                    if (data.stage === 'confirming_availability') {
-                        resultClass = 'background: #cce7ff;';
-                    } else if (data.error) {
-                        resultClass = 'background: #f8d7da;';
-                    } else {
-                        resultClass = 'background: #d4edda;';
-                    }
-                    
                     results.push({
                         step: i + 1,
                         message: messages[i],
                         response: data.message,
                         stage: data.stage,
                         price: data.price,
-                        booking_ref: data.booking_ref,
-                        supplier_confirmed: data.supplier_confirmed,
-                        success: data.success,
-                        style: resultClass
+                        success: data.success
                     });
                     
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
                 } catch (error) {
                     results.push({
                         step: i + 1,
                         message: messages[i],
-                        error: error.message,
-                        style: 'background: #f8d7da;'
+                        error: error.message
                     });
                 }
             }
             
             resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
-                <div style="margin: 10px 0; padding: 10px; ${result.style} border-radius: 5px;">
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
                     <strong>Step ${result.step}: ${result.message}</strong><br>
-                    ${result.error ? `Error: ${result.error}` : `
-                        Response: ${result.response}<br>
-                        Stage: ${result.stage || 'N/A'}<br>
-                        Price: ${result.price || 'N/A'}<br>
-                        Booking Ref: ${result.booking_ref || 'N/A'}<br>
-                        Supplier Confirmed: ${result.supplier_confirmed ? 'Yes' : 'No'}
-                    `}
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
                 </div>
             `).join('');
         }
@@ -1630,9 +1190,8 @@ def manager_dashboard_api():
 
 
 if __name__ == '__main__':
-    print("Starting WasteKing System...")
-    print("All agents initialized with shared conversation storage")
-    print("Supplier call integration requires Twilio Voice API setup")
-    print("All business rules preserved - no dummy data")
+    print("🚀 Starting WasteKing FINAL System...")
+    print("✅ All agents initialized with shared conversation storage")
+    print("✅ All business rules from provided files have been captured.")
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
