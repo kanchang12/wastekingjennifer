@@ -1006,23 +1006,6 @@ def manager_dashboard_page():
 </html>
 """)
 
-@app.route('/api/dashboard/user')
-def user_dashboard_api():
-    try:
-        dashboard_data = dashboard_manager.get_user_dashboard_data()
-        return jsonify({"success": True, "data": dashboard_data})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
-
-@app.route('/api/dashboard/manager')
-def manager_dashboard_api():
-    try:
-        dashboard_data = dashboard_manager.get_manager_dashboard_data()
-        return jsonify({"success": True, "data": dashboard_data})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
 
 @app.route('/api/test-interface')
 def test_interface_page():
