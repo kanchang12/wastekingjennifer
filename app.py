@@ -187,21 +187,12 @@ def is_business_hours():
     return False
 
 def send_webhook(conversation_id, data, reason):
-    try:
-        payload = {
-            "conversation_id": conversation_id,
-            "timestamp": datetime.now().isoformat(),
-            "action_type": reason,
-            "customer_data": data.get('collected_data', {}),
-            "stage": data.get('stage', 'unknown'),
-            "full_transcript": data.get('history', [])
-        }
-        requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json=payload, timeout=5)
-        print(f"Webhook sent successfully for {reason}: {conversation_id}")
-        return True
-    except Exception as e:
-        print(f"Webhook failed for {conversation_id}: {e}")
-        return False
+
+    customer_data = state['collected_data']
+    requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json={"CUSTOMER_DATA":CUSTOMER_DATA}, timeout=5)
+    print(f"Webhook sent successfully for {reason}: {conversation_id}")
+    return True
+
 
 def send_sms(name, phone, booking_ref, price, payment_link):
     try:
