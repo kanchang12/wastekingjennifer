@@ -351,9 +351,9 @@ def is_business_hours():
     # For simplicity, assume UTC+0 - this needs to be UTC time
     utc_now = datetime.now(timezone.utc)
     # Convert to UK time (rough approximation)
-    uk_now = utc_now + timedelta(hours=0)  # Adjust this based on BST/GMT
+    uk_now = utc_now + timedelta(hours=0) # Adjust this based on BST/GMT
     
-    day = uk_now.weekday()  # Monday=0, Sunday=6
+    day = uk_now.weekday() # Monday=0, Sunday=6
     hour = uk_now.hour + (uk_now.minute / 60.0)
     
     print(f"DEBUG: UTC time: {utc_now.strftime('%A %H:%M')}")
@@ -450,37 +450,39 @@ class OpenAIQuestionValidator:
             print(f"OpenAI response generation error: {e}")
             return f"Thank you! I have your details and I'm getting your {service_type} quote now."
     
-    def handle_general_query(self, message, conversation_history):
-        """Handle general customer queries using ChatGPT for natural responses"""
+    def handle_general_query(self, message, conversation_history, collected_data):
+        """Handle general customer queries using ChatGPT for natural responses with full context"""
         try:
-            prompt = f"""You are Jennifer, a friendly UK-based Waste King customer service agent. Respond naturally to this customer message: "{message}"
+            prompt = f"""You are Jennifer, a friendly UK-based Waste King customer service agent.
+You have the following information about the current customer and their request:
+- Collected Data: {json.dumps(collected_data)}
+- Recent Conversation History: {conversation_history[-5:]}
 
-IMPORTANT RULES:
-- Keep responses under 2 sentences and conversational
-- Never use words like "brilliant", "excellent", "perfect" - use natural phrases like "That's good", "I'd be happy to help", "No problem"
-- We offer ALL these services: skip hire, man & van clearances, grab hire, toilet hire, road sweeping, aggregates, wheelie bins, asbestos removal, hazardous waste, and RORO skips
-- For general greetings like "how are you", respond warmly but briefly then offer help
-- If asked about specific people (like Tracey), politely redirect to how you can help
-- For service exchanges, confirm we can help and ask for their details
-- Don't be overly rigid about postcodes - accept partial postcodes initially
-- If customer seems in a hurry, acknowledge it and work efficiently
-- For pricing questions, explain you'll get them a quote quickly
-- Be conversational and natural, like a real person would speak
+The customer's most recent message is: "{message}".
 
-Previous conversation: {conversation_history[-3:] if conversation_history else 'None'}
+IMPORTANT INSTRUCTIONS:
+- You must understand the full context of the conversation and collected data.
+- NEVER ask for information that is already present in the "Collected Data" object (e.g., if 'postcode' exists, do not ask for it).
+- NEVER repeat a question that has been asked in the last 5 messages of the conversation history.
+- Keep your responses concise and conversational (1-2 sentences).
+- Respond warmly and helpfully. Do not be overly formal.
+- We offer a wide range of services including skip hire, man & van, grab hire, and many others.
+- If the customer is asking a question about a specific person (like Tracey), politely redirect them by saying you can help them directly.
+- Do not generate pricing information. The system will handle that separately.
+- Do not confirm if you received the information if you already did it.
+- If the user says "yes" or "ok" without a clear question, acknowledge their response and ask if they need anything else.
 
-Respond as Jennifer would - friendly, natural, and helpful."""
-
+Based on this context, what is your single, best next response?
+"""
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo", 
-                messages=[{"role": "user", "content": prompt}], 
-                max_tokens=80, 
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
                 temperature=0.5
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"OpenAI general query error: {e}")
-            # Fallback responses for common queries
             message_lower = message.lower()
             if any(greeting in message_lower for greeting in ['how are you', 'hello', 'hi there']):
                 return "I'm well, thank you! How can I help you today?"
@@ -577,50 +579,41 @@ class DashboardManager:
 class BaseAgent:
     def __init__(self):
         self.conversations = {}
+        self.openai_validator = OpenAIQuestionValidator()
 
     def process_message(self, message, conversation_id):
         state = self.conversations.get(conversation_id, {'history': [], 'collected_data': {}, 'stage': 'initial'})
         state['history'].append(f"Customer: {message}")
         
-        # Check if we need to ask about customer type first - ONLY once, no double questioning
-        if not state.get('collected_data', {}).get('customer_type') and not any(word in message.lower() for word in ['domestic', 'trade', 'business', 'commercial', 'company']) and not state.get('customer_type_asked'):
-            customer_type_response = self.ask_customer_type(message, state)
-            if customer_type_response:
-                state['customer_type_asked'] = True
-                state['history'].append(f"Agent: {customer_type_response}")
-                self.conversations[conversation_id] = state.copy()
-                return customer_type_response
+        # Handle special rules that bypass data collection (complaints, etc.)
+        special_response = self.check_special_rules(message, state)
+        if special_response:
+            state['history'].append(f"Agent: {special_response['response']}")
+            state['stage'] = special_response.get('stage', 'transfer_completed')
+            self.conversations[conversation_id] = state.copy()
+            send_webhook(conversation_id, {'collected_data': state['collected_data'], 'history': state['history'], 'stage': state['stage']}, special_response.get('reason', 'transfer'))
+            return special_response['response']
+
+        # Extract data and update the state first
+        new_data = self.extract_data(message)
+        state['collected_data'].update(new_data)
         
-        # Handle LG question flows - with proper state management to avoid double questioning
-        if state.get('stage') == 'collecting_lg_info' and not state.get('lg_questions_completed'):
+        # Check for LG service questions first
+        if state.get('lg_service_type') and not state.get('lg_questions_completed'):
             lg_response = self.handle_lg_questions(message, state, conversation_id)
             if lg_response:
                 state['history'].append(f"Agent: {lg_response}")
                 self.conversations[conversation_id] = state.copy()
                 return lg_response
-        
-        special_response = self.check_special_rules(message, state)
-        if special_response:
-            state['history'].append(f"Agent: {special_response['response']}")
-            state['stage'] = special_response.get('stage', 'transfer_completed')
-            
-            # Handle callback and email requirements
-            if special_response.get('callback_required'):
-                state['callback_required'] = True
-                state['callback_reason'] = special_response.get('callback_reason', 'General inquiry')
-            
-                if state.get('collected_data', {}).get('customer_type') == 'trade':
-                    send_trade_customer_email(state['collected_data'], state['history'])
-                else:
-                    send_non_skip_inquiry_email(state['collected_data'], special_response.get('reason', 'general'), state['history'])
-            
-            send_webhook(conversation_id, {'collected_data': state['collected_data'], 'history': state['history'], 'stage': state['stage']}, special_response.get('reason', 'transfer'))
-            self.conversations[conversation_id] = state.copy()
-            return special_response['response']
 
-        new_data = self.extract_data(message)
-        state['collected_data'].update(new_data)
-        
+        # Check for missing required data and ask for it. This is the main loop.
+        missing_info_response = self.check_for_missing_info(state, state.get('collected_data', {}).get('service'))
+        if missing_info_response:
+            state['history'].append(f"Agent: {missing_info_response}")
+            self.conversations[conversation_id] = state.copy()
+            return missing_info_response
+            
+        # If all data is collected, and it's not a special case, process the request
         response = self.get_next_response(message, state, conversation_id)
         
         # Always ask if there's anything else before ending
@@ -638,11 +631,6 @@ class BaseAgent:
         """Handle LG service question flows with proper state management"""
         lg_service = state.get('lg_service_type')
         collected = state.get('collected_data', {})
-        
-        # Extract basic info first
-        new_data = self.extract_data(message)
-        state['collected_data'].update(new_data)
-        collected = state['collected_data']
         
         # Road Sweeper questions - with state tracking to avoid repetition
         if lg_service == 'road_sweeper':
@@ -665,17 +653,6 @@ class BaseAgent:
                 state['asked_phone'] = True
                 return "What's the best phone number to contact you on?"
             else:
-                # Extract hours and tipping info from message
-                if 'hour' in message.lower():
-                    hour_match = re.search(r'(\d+)\s*hour', message.lower())
-                    if hour_match:
-                        state['collected_data']['hours_required'] = f"{hour_match.group(1)} hours"
-                
-                if any(phrase in message.lower() for phrase in ['on site', 'onsite', 'tipping on site']):
-                    state['collected_data']['tipping_location'] = 'On site'
-                elif any(phrase in message.lower() for phrase in ['take away', 'take it away', 'off site']):
-                    state['collected_data']['tipping_location'] = 'Take away'
-                
                 # Complete and send email
                 send_non_skip_inquiry_email(collected, 'road_sweeper', state.get('history', []))
                 state['stage'] = 'information_collected'
@@ -709,11 +686,6 @@ class BaseAgent:
                 state['asked_phone'] = True
                 return "What's the best phone number to contact you on?"
             else:
-                # Extract number required
-                number_match = re.search(r'(\d+)', message)
-                if number_match:
-                    state['collected_data']['number_required'] = f"{number_match.group(1)} toilets"
-                
                 # Complete and send email
                 send_non_skip_inquiry_email(collected, 'toilet_hire', state.get('history', []))
                 state['stage'] = 'information_collected'
@@ -831,20 +803,63 @@ class BaseAgent:
                 else:
                     return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow."
         
-        # Default for other LG services - with state tracking
-        else:
-            if not collected.get('firstName') and not state.get('asked_name'):
-                state['asked_name'] = True
-                return "What's your name?"
-            elif not collected.get('postcode') and not state.get('asked_postcode'):
+        # Hazardous Waste questions - with state tracking
+        elif lg_service == 'hazardous_waste':
+            if not collected.get('postcode') and not state.get('asked_postcode'):
                 state['asked_postcode'] = True
                 return "Can I take your postcode?"
+            elif not collected.get('description') and not state.get('asked_description'):
+                state['asked_description'] = True
+                return "Can you describe the hazardous waste for me?"
+            elif not collected.get('data_sheet') and not state.get('asked_data_sheet'):
+                state['asked_data_sheet'] = True
+                return "Do you have a data sheet for the waste? We'll need that to quote you."
+            elif not collected.get('firstName') and not state.get('asked_name'):
+                state['asked_name'] = True
+                return "What's your name?"
             elif not collected.get('phone') and not state.get('asked_phone'):
                 state['asked_phone'] = True
                 return "What's the best phone number to contact you on?"
             else:
-                # Complete and send email
-                send_non_skip_inquiry_email(collected, lg_service or 'general', state.get('history', []))
+                send_non_skip_inquiry_email(collected, 'hazardous_waste', state.get('history', []))
+                state['stage'] = 'information_collected'
+                state['lg_questions_completed'] = True
+                if is_business_hours():
+                    return "Thank you, I have all the details. Our certified hazardous waste team will call you back within the next few hours to confirm cost and availability."
+                else:
+                    return "Thank you, I have all the details. Our team are not here right now, I'll raise a ticket and our certified hazardous waste team will call you back first thing tomorrow."
+        
+        # Wheelie Bins questions - with state tracking
+        elif lg_service == 'wheelie_bins':
+            if not collected.get('postcode') and not state.get('asked_postcode'):
+                state['asked_postcode'] = True
+                return "Can I take your postcode?"
+            elif not collected.get('domestic_or_commercial') and not state.get('asked_customer_type'):
+                state['asked_customer_type'] = True
+                return "Are you a domestic or commercial customer?"
+            elif not collected.get('waste_type') and not state.get('asked_waste_type'):
+                state['asked_waste_type'] = True
+                return "What type of waste will the bins be for? General, recycling, or something else?"
+            elif not collected.get('bin_size') and not state.get('asked_bin_size'):
+                state['asked_bin_size'] = True
+                return "What size bins do you need? For example, 240 litre or 1100 litre."
+            elif not collected.get('number_bins') and not state.get('asked_number'):
+                state['asked_number'] = True
+                return "How many bins do you require?"
+            elif not collected.get('collection_frequency') and not state.get('asked_frequency'):
+                state['asked_frequency'] = True
+                return "How often do you need collection? For example, weekly or fortnightly."
+            elif not collected.get('duration') and not state.get('asked_duration'):
+                state['asked_duration'] = True
+                return "For how long will you need this service?"
+            elif not collected.get('firstName') and not state.get('asked_name'):
+                state['asked_name'] = True
+                return "What's your name?"
+            elif not collected.get('phone') and not state.get('asked_phone'):
+                state['asked_phone'] = True
+                return "What's the best phone number to contact you on?"
+            else:
+                send_non_skip_inquiry_email(collected, 'wheelie_bins', state.get('history', []))
                 state['stage'] = 'information_collected'
                 state['lg_questions_completed'] = True
                 if is_business_hours():
@@ -984,39 +999,11 @@ class BaseAgent:
         if any(term in message.lower() for term in ['call you back', 'call back', 'phone around', 'check with someone']):
             return {'response': SKIP_HIRE_RULES['not_booking_response'], 'stage': 'quote_sent', 'reason': 'not_booking_now'}
         
-        # Handle general conversational queries with ChatGPT for natural responses
-        if any(phrase in message.lower() for phrase in ['how are you', 'how are things', 'hello', 'hi there', 'good morning', 'good afternoon', 'exchange', 'swap']):
-            validator = OpenAIQuestionValidator()
-            response = validator.handle_general_query(message, state.get('history', []))
-            return {'response': response, 'stage': 'general_query_handled', 'reason': 'general_conversation'}
-        
+        # Use OpenAI as a fallback for general conversational queries
         return None
 
-    # Rewritten part of BaseAgent.get_next_response()
     def get_next_response(self, message, state, conversation_id):
-        # 1. Update collected data from the new message
-        new_data = self.extract_data(message)
-        state['collected_data'].update(new_data)
-    
-        # 2. Check for missing required information first and foremost
-        # This is the single source of truth for asking questions.
-        missing_info_response = self.check_for_missing_info(state, self.service_type)
-        if missing_info_response:
-            return missing_info_response
-    
-        # 3. If all required data is collected, proceed with service-specific logic
-        # This ensures no more "what's your postcode?" questions.
-        has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS.get(self.service_type, []))
-    
-        if has_all_required_data:
-            # Now, proceed with logic that is safe because all info is here.
-            if self.service_type == 'skip':
-                return self.get_pricing(state, conversation_id, self.should_book(message))
-            else:
-                return self.handle_lead_generation(state, conversation_id)
-    
-        # Fallback response for unhandled cases
-        return "I'm sorry, I'm not quite sure how to help with that. Can you please tell me what you need?"
+        raise NotImplementedError("Subclass must implement get_next_response method")
     
     def extract_data(self, message):
         data = {}
@@ -1113,17 +1100,17 @@ class BaseAgent:
             data['skip_or_collection'] = 'Collection'
         
         # Waste type
-        if any(waste in message.lower() for waste in ['soil', 'rubble', 'concrete', 'bricks']):
+        if any(waste in message_lower for waste in ['soil', 'rubble', 'concrete', 'bricks']):
             data['waste_type'] = 'Heavy materials (soil/rubble)'
-        elif any(waste in message.lower() for waste in ['wood', 'furniture', 'general', 'mixed']):
+        elif any(waste in message_lower for waste in ['wood', 'furniture', 'general', 'mixed']):
             data['waste_type'] = 'General waste'
-        elif 'green' in message.lower():
+        elif 'green' in message_lower:
             data['waste_type'] = 'Green waste'
         
         # Tipper or grab for aggregates
-        if 'tipper' in message.lower():
+        if 'tipper' in message_lower:
             data['tipper_or_grab'] = 'Tipper delivery'
-        elif 'grab' in message.lower():
+        elif 'grab' in message_lower:
             data['tipper_or_grab'] = 'Grab delivery'
         
         # Address line 1
@@ -1343,11 +1330,16 @@ class SkipAgent(BaseAgent):
         if any(item in message.lower() for item in ['prohibited', 'not allowed', 'can\'t put', 'what can\'t']):
             return "Items that can't go in skips include: mattresses (£15 charge), fridges (£20 charge), upholstery, plasterboard, asbestos, paint, liquids, tyres, and gas cylinders. Our man and van service can collect most of these items. Would you like to continue with skip hire?"
 
-        # Check for missing info - NO DOUBLE QUESTIONING
+        # If a customer confirms they want to proceed despite prohibited items, continue with regular flow
+        if "continue with skip hire" in message.lower() or ("yes" in message.lower() and state.get('prohibited_item_mentioned')):
+            state['prohibited_item_mentioned'] = True # This flag helps to avoid repeating the warning
+
+        # Check for missing info before getting pricing
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
 
+        # If all required data is present, get the price.
         if has_all_required_data and not state.get('price'):
             # Check for heavy materials and large skip combination
             if state.get('collected_data', {}).get('type') in ['10yd', '12yd', '14yd', '16yd', '20yd'] and any(material in message.lower() for material in ['soil', 'rubble', 'concrete', 'bricks', 'heavy']):
@@ -1359,13 +1351,17 @@ class SkipAgent(BaseAgent):
             
             return self.get_pricing(state, conversation_id, wants_to_book)
         
+        # If a price has been quoted and the user wants to book, complete the booking
         if wants_to_book and state.get('price'):
             return self.complete_booking(state, conversation_id)
-        
+            
+        # Handle permit questions
         if 'permit' in message.lower() and any(term in message.lower() for term in ['cost', 'price', 'charge']):
             return "We'll arrange the permit for you and include the cost in your quote. The price varies by council."
             
-        return self.get_pricing(state, conversation_id, wants_to_book)
+        # Fallback for unhandled queries (use OpenAI)
+        return self.openai_validator.handle_general_query(message, state['history'], state['collected_data'])
+
 
 class MAVAgent(BaseAgent):
     def __init__(self):
@@ -1375,21 +1371,19 @@ class MAVAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         collected_data = state.get('collected_data', {})
-
-        # 1. Update collected data from the current message
         new_data = self.extract_data(message)
         state['collected_data'].update(new_data)
 
-        # 2. Check for heavy materials first; this is an immediate transfer to human.
+        # Check for heavy materials first; this is an immediate transfer to human.
         if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
             return "Our man and van service is designed for light waste. A skip might be more suitable. I'll arrange for our team to call you back to discuss this in more detail."
 
-        # 3. Check for missing required information first and foremost
+        # Check for missing required information first and foremost
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
 
-        # 4. If all required data is collected, proceed with lead generation
+        # If all required data is collected, proceed with lead generation
         has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['mav'])
         if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
@@ -1399,14 +1393,13 @@ class MAVAgent(BaseAgent):
             # Send email to Kanchan with all collected info
             send_non_skip_inquiry_email(collected_data, 'mav', state.get('history', []))
             
-            # Formulate the final response based on business hours
             if is_business_hours():
                 return f"Thank you, {collected_data.get('firstName', '')}. I have all your man & van details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with? Thanks for trusting Waste King"
             else:
                 return f"Thank you, {collected_data.get('firstName', '')}. I have all your man & van details. Our team will call you back first thing tomorrow with pricing and availability. Is there anything else I can help with? Thanks for trusting Waste King"
 
-        # 5. Fallback for unexpected messages or conversation already completed
-        return "I have all the information I need, thank you. Our team will call you back shortly."
+        # Fallback for unhandled queries (use OpenAI)
+        return self.openai_validator.handle_general_query(message, state['history'], state['collected_data'])
 
 
 class GrabAgent(BaseAgent):
@@ -1417,33 +1410,16 @@ class GrabAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         collected_data = state.get('collected_data', {})
-        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['grab'])
-        customer_type = collected_data.get('customer_type')
+        new_data = self.extract_data(message)
+        state['collected_data'].update(new_data)
         
-        # For TRADE customers, immediately collect basic info and send to LG
-        if customer_type == 'trade':
-            basic_fields = ['firstName', 'postcode', 'phone']
-            missing_basic = [f for f in basic_fields if not collected_data.get(f)]
-            if missing_basic:
-                field = missing_basic[0]
-                if field == 'firstName': return "What's your name?"
-                elif field == 'postcode': return "What's your postcode?"
-                elif field == 'phone': return "What's the best phone number to contact you on?"
-            else:
-                # Send to LG team for trade customers
-                send_non_skip_inquiry_email(collected_data, 'grab_trade', state.get('history', []))
-                state['stage'] = 'lead_sent'
-                if is_business_hours():
-                    return "Thank you, I have your details. Our specialist team will call you back within the next few hours to confirm cost and availability for your grab hire requirement."
-                else:
-                    return "Thank you, I have your details. Our team will call you back first thing tomorrow to confirm cost and availability for your grab hire requirement."
-
-        # Check for missing required information first - NO DOUBLE QUESTIONING
+        # Check for missing required information first and foremost
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
 
-        # If we have all information, send email to Kanchan - NO PRICING
+        # If all information is collected, send email to Kanchan
+        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['grab'])
         if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
             state['stage'] = 'lead_sent'
@@ -1453,9 +1429,9 @@ class GrabAgent(BaseAgent):
             send_non_skip_inquiry_email(collected_data, 'grab', state.get('history', []))
             
             if is_business_hours():
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {collected_data.get('type', 'grab')} requirement."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {collected_data.get('type', 'grab')} requirement. Is there anything else I can help with? Thanks for trusting Waste King"
             else:
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back first thing tomorrow with pricing and availability for your {collected_data.get('type', 'grab')} requirement."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back first thing tomorrow with pricing and availability for your {collected_data.get('type', 'grab')} requirement. Is there anything else I can help with? Thanks for trusting Waste King"
 
         # Wheeler size explanations
         if not state.get('collected_data', {}).get('wheeler_explained'):
@@ -1475,8 +1451,8 @@ class GrabAgent(BaseAgent):
                 return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
             state['collected_data']['materials_checked'] = True
 
-        # Default response if no specific action is triggered
-        return "I need just a few more details to arrange your grab hire."
+        # Fallback for unhandled queries (use OpenAI)
+        return self.openai_validator.handle_general_query(message, state['history'], state['collected_data'])
 
 # --- FLASK APP AND ROUTING ---
 app = Flask(__name__)
@@ -1950,8 +1926,8 @@ def manager_dashboard_page():
                             const percentage = data.data.total_calls > 0 ? ((count / data.data.total_calls) * 100).toFixed(1) : 0;
                             const serviceColor = service === 'skip' ? '#2ed573' : service === 'mav' || service === 'grab' ? '#ffa502' : '#667eea';
                             const serviceLabel = service === 'skip' ? 'Skip (AI Sales)' : 
-                                               service === 'mav' ? 'Man & Van (Leads)' :
-                                               service === 'grab' ? 'Grab (Leads)' : service;
+                                                   service === 'mav' ? 'Man & Van (Leads)' :
+                                                   service === 'grab' ? 'Grab (Leads)' : service;
                             return `
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
                                     <div style="flex: 1;">
@@ -1962,7 +1938,7 @@ def manager_dashboard_page():
                                 </div>
                             `;
                         }).join('') || '<div style="color: #666;">No service data yet</div>';
-                    
+                        
                         updateCallbackList(data.data.callback_required_calls || []);
                         updateCallsList(data.data.recent_calls || []);
                     }
@@ -2011,12 +1987,12 @@ def manager_dashboard_page():
             
             const callsHTML = calls.slice().reverse().map(call => {
                 const statusClass = call.status === 'active' ? 'status-active' : 
-                                   call.status === 'completed' ? 'status-completed' :
-                                   call.stage === 'lead_sent' ? 'status-lead_sent' : 'status-transfer_completed';
+                                     call.status === 'completed' ? 'status-completed' :
+                                     call.stage === 'lead_sent' ? 'status-lead_sent' : 'status-transfer_completed';
                 
-                const perfIndicator = (call.status === 'completed' && call.price) ? 'perf-excellent' : 
-                                     call.stage === 'lead_sent' ? 'perf-good' :
-                                     call.status === 'active' ? 'perf-good' : 'perf-poor';
+                const perfIndicator = (call.status === 'completed' and call.price) ? 'perf-excellent' : 
+                                          call.stage === 'lead_sent' ? 'perf-good' :
+                                          call.status === 'active' ? 'perf-good' : 'perf-poor';
                 
                 const duration = call.timestamp ? Math.round((new Date() - new Date(call.timestamp)) / 1000 / 60) : 0;
                 const collected = call.collected_data || {};
