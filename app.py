@@ -868,72 +868,72 @@ class BaseAgent:
                 return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'road_sweeper'}
         
         # Toilet Hire
-        if any(trigger in message_lower for trigger in ['toilet hire', 'portaloo', 'portable toilet']):
+        if any(trigger in message.lower() for trigger in ['toilet hire', 'portaloo', 'portable toilet']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'toilet_hire'
                 return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'toilet_hire'}
         
         # Asbestos
-        if any(trigger in message_lower for trigger in ['asbestos']):
+        if any(trigger in message.lower() for trigger in ['asbestos']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'asbestos'
                 return {'response': "Asbestos requires specialist handling. Let me take a few details and arrange for our certified team to call you back. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'asbestos'}
         
         # RORO
-        if any(trigger in message_lower for trigger in ['40 yard', '40-yard', 'roro', 'roll on roll off', '30 yard', '35 yard']):
+        if any(trigger in message.lower() for trigger in ['40 yard', '40-yard', 'roro', 'roll on roll off', '30 yard', '35 yard']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'roro'
                 return {'response': "Let me take some details and get our specialist team to contact you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'roro'}
         
         # Wait and Load
-        if any(trigger in message_lower for trigger in ['wait and load', 'wait & load', 'wait load']):
+        if any(trigger in message.lower() for trigger in ['wait and load', 'wait & load', 'wait load']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'wait_and_load'
                 return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'wait_and_load'}
         
         # Aggregates
-        if any(trigger in message_lower for trigger in ['aggregates', 'sand', 'gravel', 'stone']):
+        if any(trigger in message.lower() for trigger in ['aggregates', 'sand', 'gravel', 'stone']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'aggregates'
                 return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'aggregates'}
         
         # Hazardous Waste
-        if any(trigger in message_lower for trigger in ['hazardous waste', 'chemical waste', 'dangerous waste']):
+        if any(trigger in message.lower() for trigger in ['hazardous waste', 'chemical waste', 'dangerous waste']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'hazardous_waste'
                 return {'response': "Hazardous waste requires specialist handling. Let me take a few details and arrange for our certified team to call you back. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'hazardous_waste'}
         
         # Wheelie Bins
-        if any(trigger in message_lower for trigger in ['wheelie bin', 'wheelie bins', 'bin hire']):
+        if any(trigger in message.lower() for trigger in ['wheelie bin', 'wheelie bins', 'bin hire']):
             if not state.get('lg_questions_started'):
                 state['lg_questions_started'] = True
                 state['lg_service_type'] = 'wheelie_bins'
                 return {'response': "Let me take a few details, and I'll arrange for one of our specialist team to confirm the cost for you. Can I take your postcode?", 'stage': 'collecting_lg_info', 'reason': 'wheelie_bins'}
         
         # Waste Bags
-        if any(trigger in message_lower for trigger in ['skip bag', 'waste bag', 'skip sack']):
+        if any(trigger in message.lower() for trigger in ['skip bag', 'waste bag', 'skip sack']):
             return {'response': LG_SERVICES['waste_bags']['scripts']['info'], 'stage': 'info_provided', 'reason': 'waste_bags'}
 
         # General queries
-        if any(term in message_lower for term in ['depot close by', 'local to me', 'near me']):
+        if any(term in message.lower() for term in ['depot close by', 'local to me', 'near me']):
             return {'response': GENERAL_SCRIPTS['location_response'], 'stage': 'info_provided', 'reason': 'location_query'}
-        if any(term in message_lower for term in ['speak to human', 'talk to person', 'human agent']):
+        if any(term in message.lower() for term in ['speak to human', 'talk to person', 'human agent']):
             return {'response': "Yes I can see if someone is available. What's your name, your telephone number, what is your company name? What is the call regarding?", 'stage': 'collecting_transfer_info', 'reason': 'human_request', 'callback_required': True, 'callback_reason': 'Human agent request'}
-        if any(term in message_lower for term in ['when can you deliver', 'delivery time', 'when will skip arrive']):
+        if any(term in message.lower() for term in ['when can you deliver', 'delivery time', 'when will skip arrive']):
             return {'response': SKIP_HIRE_RULES['delivery_timing'], 'stage': 'info_provided', 'reason': 'delivery_timing'}
-        if any(term in message_lower for term in ['what time', 'specific time', 'exact time']):
+        if any(term in message.lower() for term in ['what time', 'specific time', 'exact time']):
             return {'response': GENERAL_SCRIPTS['timing_query'], 'stage': 'info_provided', 'reason': 'timing_query'}
-        if any(term in message_lower for term in ['call you back', 'call back', 'phone around', 'check with someone']):
+        if any(term in message.lower() for term in ['call you back', 'call back', 'phone around', 'check with someone']):
             return {'response': SKIP_HIRE_RULES['not_booking_response'], 'stage': 'quote_sent', 'reason': 'not_booking_now'}
         
         # Handle general conversational queries with ChatGPT for natural responses
-        if any(phrase in message_lower for phrase in ['how are you', 'how are things', 'hello', 'hi there', 'good morning', 'good afternoon', 'exchange', 'swap']):
+        if any(phrase in message.lower() for phrase in ['how are you', 'how are things', 'hello', 'hi there', 'good morning', 'good afternoon', 'exchange', 'swap']):
             validator = OpenAIQuestionValidator()
             response = validator.handle_general_query(message, state.get('history', []))
             return {'response': response, 'stage': 'general_query_handled', 'reason': 'general_conversation'}
@@ -981,74 +981,74 @@ class BaseAgent:
         # Service type
         if any(word in message_lower for word in ['skip', 'skip hire', 'container hire']): data['service'] = 'skip'
         elif any(phrase in message_lower for phrase in ['house clearance', 'man and van', 'mav', 'furniture', 'appliance', 'van collection', 'clearance']): data['service'] = 'mav'
-        elif any(phrase in message_lower for phrase in ['grab hire', 'grab lorry', '8 wheeler', '6 wheeler', 'soil removal', 'rubble removal']): data['service'] = 'grab'
+        elif any(phrase in message.lower() for phrase in ['grab hire', 'grab lorry', '8 wheeler', '6 wheeler', 'soil removal', 'rubble removal']): data['service'] = 'grab'
         
         # Skip size - improved recognition
         if data.get('service') == 'skip':
             for size in SKIP_SIZES:
                 size_num = size.replace('yd', '')
-                if any(variant in message_lower for variant in [f'{size_num}-yard', f'{size_num} yard', f'{size_num}yd', f'{size_num} yd']):
+                if any(variant in message.lower() for variant in [f'{size_num}-yard', f'{size_num} yard', f'{size_num}yd', f'{size_num} yd']):
                     data['type'] = size
                     break
         
         # LG Service specific data extraction
         # Hours for road sweeper
-        if 'hour' in message_lower:
+        if 'hour' in message.lower():
             hour_match = re.search(r'(\d+)\s*hour', message_lower)
             if hour_match:
                 data['hours_required'] = f"{hour_match.group(1)} hours"
         
         # Tipping location
-        if any(phrase in message_lower for phrase in ['on site', 'onsite', 'tipping on site']):
+        if any(phrase in message.lower() for phrase in ['on site', 'onsite', 'tipping on site']):
             data['tipping_location'] = 'On site'
-        elif any(phrase in message_lower for phrase in ['take away', 'take it away', 'off site', 'offsite']):
+        elif any(phrase in message.lower() for phrase in ['take away', 'take it away', 'off site', 'offsite']):
             data['tipping_location'] = 'Take away'
         
         # Number required (toilets, bins, etc.)
-        if any(word in message_lower for word in ['toilet', 'portaloo', 'bin']):
+        if any(word in message.lower() for word in ['toilet', 'portaloo', 'bin']):
             number_match = re.search(r'(\d+)', message)
             if number_match:
                 data['number_required'] = f"{number_match.group(1)} units"
         
         # Event or long term
-        if any(phrase in message_lower for phrase in ['event', 'wedding', 'party', 'festival']):
+        if any(phrase in message.lower() for phrase in ['event', 'wedding', 'party', 'festival']):
             data['event_or_longterm'] = 'Event'
-        elif any(phrase in message_lower for phrase in ['long term', 'longterm', 'ongoing', 'permanent']):
+        elif any(phrase in message.lower() for phrase in ['long term', 'longterm', 'ongoing', 'permanent']):
             data['event_or_longterm'] = 'Long term'
         
         # Duration
-        if any(word in message_lower for word in ['day', 'week', 'month']):
+        if any(word in message.lower() for word in ['day', 'week', 'month']):
             duration_match = re.search(r'(\d+)\s*(day|week|month)', message_lower)
             if duration_match:
                 data['duration'] = f"{duration_match.group(1)} {duration_match.group(2)}s"
         
         # When required
-        if any(when in message_lower for when in ['today', 'tomorrow', 'asap', 'urgent']):
+        if any(when in message.lower() for when in ['today', 'tomorrow', 'asap', 'urgent']):
             data['when_required'] = 'ASAP'
-        elif any(when in message_lower for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+        elif any(when in message.lower() for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
             for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
-                if day in message_lower:
+                if day in message.lower():
                     data['when_required'] = day.title()
                     break
         
         # Skip or collection for asbestos
-        if any(word in message_lower for word in ['skip', 'container']):
+        if any(word in message.lower() for word in ['skip', 'container']):
             data['skip_or_collection'] = 'Skip'
-        elif any(word in message_lower for word in ['collection', 'collect', 'remove']):
+        elif any(word in message.lower() for word in ['collection', 'collect', 'remove']):
             data['skip_or_collection'] = 'Collection'
         
         # Waste type
-        if any(waste in message_lower for waste in ['soil', 'rubble', 'concrete', 'bricks']):
+        if any(waste in message.lower() for waste in ['soil', 'rubble', 'concrete', 'bricks']):
             data['waste_type'] = 'Heavy materials (soil/rubble)'
-        elif any(waste in message_lower for waste in ['wood', 'furniture', 'general', 'mixed']):
+        elif any(waste in message.lower() for waste in ['wood', 'furniture', 'general', 'mixed']):
             data['waste_type'] = 'General waste'
-        elif 'green' in message_lower:
+        elif 'green' in message.lower():
             data['waste_type'] = 'Green waste'
         
         # Tipper or grab for aggregates
-        if 'tipper' in message_lower:
+        if 'tipper' in message.lower():
             data['tipper_or_grab'] = 'Tipper delivery'
-        elif 'grab' in message_lower:
+        elif 'grab' in message.lower():
             data['tipper_or_grab'] = 'Grab delivery'
         
         # Address line 1
@@ -1060,16 +1060,16 @@ class BaseAgent:
                 break
 
         # Level load confirmation
-        if any(phrase in message_lower for phrase in ['level load', 'level', 'not overloaded', 'flush']):
-            data['level_load'] = 'yes' if any(positive in message_lower for positive in ['yes', 'level', 'flush']) else 'no'
+        if any(phrase in message.lower() for phrase in ['level load', 'level', 'not overloaded', 'flush']):
+            data['level_load'] = 'yes' if any(positive in message.lower() for positive in ['yes', 'level', 'flush']) else 'no'
         
         # Prohibited items check
-        if any(phrase in message_lower for phrase in ['no prohibited', 'prohibited items', 'no restricted']):
+        if any(phrase in message.lower() for phrase in ['no prohibited', 'prohibited items', 'no restricted']):
             data['prohibited_check'] = 'confirmed'
         
         # Access issues
-        if any(phrase in message_lower for phrase in ['access', 'narrow', 'parking', 'restrictions']):
-            data['access_issues'] = 'yes' if any(issue in message_lower for issue in ['narrow', 'difficult', 'restricted', 'problem']) else 'no'
+        if any(phrase in message.lower() for phrase in ['access', 'narrow', 'parking', 'restrictions']):
+            data['access_issues'] = 'yes' if any(issue in message.lower() for issue in ['narrow', 'difficult', 'restricted', 'problem']) else 'no'
         
         return data
 
@@ -1281,41 +1281,28 @@ class MAVAgent(BaseAgent):
         self.service_name = 'man & van'
 
     def get_next_response(self, message, state, conversation_id):
-        has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['mav'])
+        collected_data = state.get('collected_data', {})
+        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['mav'])
 
         # Check for heavy materials first - immediate transfer
         if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
             return MAV_RULES['B2_heavy_materials']['script']
 
-        # Always ask about supplement items for MAV
-        if has_all_required_data and not state.get('supplement_check_done'):
-            state['supplement_check_done'] = True
+        # Check for missing required information first
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
+
+        # If we have all required information, proceed to send email
+        if has_all_required_data and not state.get('email_sent'):
+            state['email_sent'] = True
+            state['stage'] = 'information_collected'
             self.conversations[conversation_id] = state
-            return MAV_RULES['supplement_check']
-
-        # Check if we need volume information
-        if has_all_required_data and not state.get('collected_data', {}).get('volume'):
-            if not state.get('volume_explained'):
-                state['volume_explained'] = True
-                return MAV_RULES['B1_information_gathering']['cubic_yard_explanation']
-            else:
-                return "How many cubic yards would you estimate you have?"
-
-        # Check for when required
-        if has_all_required_data and not state.get('collected_data', {}).get('when_required'):
-            return "When do you need the collection? Today, tomorrow, or a specific date?"
-
-        # If we have all information, send email to Kanchan instead of pricing
-        if has_all_required_data and state.get('supplement_check_done') and state.get('collected_data', {}).get('when_required'):
-            if not state.get('email_sent'):
-                state['email_sent'] = True
-                state['stage'] = 'information_collected'
-                self.conversations[conversation_id] = state
-                
-                # Send email to Kanchan with all collected info
-                send_non_skip_inquiry_email(state['collected_data'], 'mav', state.get('history', []))
-                
-                return f"Thank you {state['collected_data']['firstName']}, I have all your man & van details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with today?"
+            
+            # Send email to Kanchan with all collected info
+            send_non_skip_inquiry_email(collected_data, 'mav', state.get('history', []))
+            
+            return f"Thank you {collected_data.get('firstName', '')}, I have all your man & van details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with today?"
 
         # Handle timing questions
         if 'sunday' in message.lower(): 
@@ -1323,25 +1310,9 @@ class MAVAgent(BaseAgent):
         if any(time_phrase in message.lower() for time_phrase in ['what time', 'specific time', 'exact time', 'morning', 'afternoon']):
             return MAV_RULES['B5_additional_timing']['time_script']
 
-        # Extract volume information
-        volume_match = re.search(r'(\d+)\s*(?:cubic\s*)?yard', message.lower())
-        if volume_match:
-            state['collected_data']['volume'] = f"{volume_match.group(1)} yards"
-
-        # Extract when required
-        if any(when in message.lower() for when in ['today', 'tomorrow', 'asap', 'urgent']):
-            state['collected_data']['when_required'] = 'ASAP'
-        elif any(when in message.lower() for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
-            for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
-                if day in message.lower():
-                    state['collected_data']['when_required'] = day.title()
-                    break
-
-        missing_info_response = self.check_for_missing_info(state, self.service_type)
-        if missing_info_response:
-            return missing_info_response
-        
+        # Default response if no specific action is triggered
         return "I need just a few more details to arrange your man & van collection."
+
 
 class GrabAgent(BaseAgent):
     def __init__(self):
@@ -1350,103 +1321,44 @@ class GrabAgent(BaseAgent):
         self.service_name = 'grab hire'
 
     def get_next_response(self, message, state, conversation_id):
-        has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['grab'])
-        customer_type = state.get('collected_data', {}).get('customer_type')
+        collected_data = state.get('collected_data', {})
+        has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['grab'])
+        customer_type = collected_data.get('customer_type')
         
         # For TRADE customers, immediately collect basic info and transfer to LG
         if customer_type == 'trade':
-            if not state.get('collected_data', {}).get('firstName'):
+            if not collected_data.get('firstName'):
                 return "What's your name?"
-            elif not state.get('collected_data', {}).get('postcode'):
+            elif not collected_data.get('postcode'):
                 return "What's your postcode?"
-            elif not state.get('collected_data', {}).get('phone'):
+            elif not collected_data.get('phone'):
                 return "What's the best phone number to contact you on?"
             else:
                 # Send to LG team for trade customers
-                send_non_skip_inquiry_email(state['collected_data'], 'grab_trade', state.get('history', []))
+                send_non_skip_inquiry_email(collected_data, 'grab_trade', state.get('history', []))
                 state['stage'] = 'information_collected'
                 if is_business_hours():
                     return "Thank you, I have your details. Our specialist team will call you back within the next few hours to confirm cost and availability for your grab hire requirement. Is there anything else I can help with today?"
                 else:
                     return "Thank you, I have your details. Our team are not here right now, I'll raise a ticket and our specialist team will call you back first thing tomorrow. Is there anything else I can help with today?"
 
-        # For DOMESTIC customers, collect detailed info then send to Kanchan
-        # Explain wheeler types if mentioned
-        if not state.get('collected_data', {}).get('wheeler_explained'):
-            if '8 wheeler' in message.lower() or '8-wheeler' in message.lower():
-                state['collected_data']['wheeler_explained'] = True
-                state['collected_data']['type'] = '8wheeler'
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['8_wheeler']
-            if '6 wheeler' in message.lower() or '6-wheeler' in message.lower():
-                state['collected_data']['wheeler_explained'] = True
-                state['collected_data']['type'] = '6wheeler'
-                return GRAB_RULES['C2_grab_size_exact_scripts']['mandatory_exact_scripts']['6_wheeler']
-
-        # Ask about material type if not collected
-        if has_all_required_data and not state.get('collected_data', {}).get('material_type'):
-            return "What type of material do you need removing? Is it soil and rubble (muckaway) or mixed materials?"
-
-        # Check materials compatibility if we have material info
-        if has_all_required_data and state.get('collected_data', {}).get('material_type') and not state.get('materials_checked'):
-            material_type = state['collected_data']['material_type'].lower()
-            has_soil_rubble = any(material in material_type for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth', 'concrete'])
-            has_other_items = any(item in material_type for item in ['wood', 'furniture', 'plastic', 'metal', 'general', 'mixed'])
-            
-            if has_soil_rubble and has_other_items:
-                state['materials_checked'] = True
-                return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
-            state['materials_checked'] = True
-
-        # Ask when required if not collected
-        if has_all_required_data and not state.get('collected_data', {}).get('when_required'):
-            return "When do you need the grab hire? Today, tomorrow, or a specific date?"
-
-        # Ask about access if not collected
-        if has_all_required_data and not state.get('collected_data', {}).get('access_details'):
-            return "Are there any access issues we should know about? Any narrow roads, height restrictions, or parking limitations?"
+        # Check for missing required information first
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
 
         # If we have all information, send email to Kanchan instead of pricing
-        if (has_all_required_data and 
-            state.get('collected_data', {}).get('material_type') and 
-            state.get('collected_data', {}).get('when_required') and 
-            state.get('collected_data', {}).get('access_details') and
-            not state.get('email_sent')):
-        
+        if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
             state['stage'] = 'information_collected'
             self.conversations[conversation_id] = state
             
             # Send email to Kanchan with all collected info
-            send_non_skip_inquiry_email(state['collected_data'], 'grab', state.get('history', []))
+            send_non_skip_inquiry_email(collected_data, 'grab', state.get('history', []))
             
-            return f"Thank you {state['collected_data']['firstName']}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {state['collected_data'].get('type', 'grab')} requirement. Is there anything else I can help with today?"
+            return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {collected_data.get('type', 'grab')} requirement. Is there anything else I can help with today?"
 
-        # Extract material type from message
-        if any(material in message.lower() for material in ['soil', 'rubble', 'muckaway', 'dirt', 'earth']):
-            state['collected_data']['material_type'] = 'Soil and rubble (muckaway)'
-        elif any(material in message.lower() for material in ['mixed', 'general', 'wood', 'furniture']):
-            state['collected_data']['material_type'] = 'Mixed materials'
-
-        # Extract when required
-        if any(when in message.lower() for when in ['today', 'tomorrow', 'asap', 'urgent']):
-            state['collected_data']['when_required'] = 'ASAP'
-        elif any(when in message.lower() for when in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
-            for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']:
-                if day in message.lower():
-                    state['collected_data']['when_required'] = day.title()
-                    break
-
-        # Extract access details
-        if any(access in message.lower() for access in ['narrow', 'tight', 'restricted', 'difficult', 'no access', 'good access', 'easy access']):
-            if any(good in message.lower() for good in ['no issues', 'good access', 'easy access', 'no problem']):
-                state['collected_data']['access_details'] = 'Good access, no issues'
-            else:
-                state['collected_data']['access_details'] = 'Access restrictions mentioned'
-
-        missing_info_response = self.check_for_missing_info(state, self.service_type)
-        if missing_info_response:
-            return missing_info_response
-        
+        # Default response if no specific action is triggered
         return "I need just a few more details to arrange your grab hire."
 
 # --- FLASK APP AND ROUTING ---
