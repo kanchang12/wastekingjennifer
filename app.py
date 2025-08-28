@@ -161,7 +161,7 @@ GRAB_RULES = {
 }
 
 SMS_NOTIFICATION = '+447823656762'
-SURCHARGE_ITEMS = { 'fridges_freezers': 20, 'mattresses': 15, 'upholstered_furniture': 15, 'sofas': 15 }
+SURCHARGE_ITEMS = "None"
 REQUIRED_FIELDS = {
     'skip': ['firstName', 'postcode', 'phone'],
     'mav': ['firstName', 'postcode', 'phone'],
@@ -188,26 +188,19 @@ def is_business_hours():
 
 def send_webhook(conversation_id, data, reason):
     try:
-        customer_data = state['collected_data']
-            
-        
         payload = {
-            "customer_data": customer_data
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat(),
+            "action_type": reason,
+            "customer_data": data.get('collected_data', {}),
+            "stage": data.get('stage', 'unknown'),
+            "full_transcript": data.get('history', [])
         }
-        
-        webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
-        
-        print(f"Sending webhook to: {webhook_url}")
-        print(f"Webhook payload: {payload}")
-        
-        response = requests.post(webhook_url, json=payload, timeout=10)
-        response.raise_for_status()
-        
-        print(f"Webhook sent successfully for {reason}: {conversation_id} (Status: {response.status_code})")
+        requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json=payload, timeout=5)
+        print(f"Webhook sent successfully for {reason}: {conversation_id}")
         return True
     except Exception as e:
         print(f"Webhook failed for {conversation_id}: {e}")
-        print(f"Payload was: {payload if 'payload' in locals() else 'Not created'}")
         return False
 
 def send_sms(name, phone, booking_ref, price, payment_link):
@@ -639,7 +632,7 @@ class SkipAgent(BaseAgent):
         
         if 'plasterboard' in message.lower(): return SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
         if any(item in message.lower() for item in ['fridge', 'mattress', 'freezer']): return SKIP_HIRE_RULES['A5_prohibited_items']['restrictions_response']
-        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return SKIP_HIRE_RULES['A5_prohibited_items']['upholstery_alternative']
+        if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return "The following items may not be permitted in skips"
         if any(phrase in message.lower() for phrase in ['what cannot put', 'what can\'t put', 'prohibited', 'not allowed']):
             prohibited_items = ', '.join(SKIP_HIRE_RULES['A5_prohibited_items']['prohibited_list'])
             return f"The following items may not be permitted in skips, or may carry a surcharge: {prohibited_items}"
@@ -977,18 +970,39 @@ def user_dashboard_page():
         }
 
         function updateCallsDisplay() {
-            const container = document.getElementById('calls-container');
-            let calls = Array.from(allCalls.values()).sort((a,b) => new Date(b.timestamp||0) - new Date(a.timestamp||0));
-            if (currentFilter !== 'ALL') {
-                calls = calls.filter(c => (c.category || 'OTHERS') === currentFilter);
-            }
-            container.innerHTML = '';
-            if (calls.length === 0) {
-                container.innerHTML = '<div class="no-calls">No calls in ' + currentFilter + '</div>';
-                return;
-            }
-            calls.forEach(call => container.appendChild(createCallElement(call)));
+    const container = document.getElementById('calls-container');
+    const now = Date.now();
+
+    // Clean up old calls (> 5 min) from allCalls
+    for (let [id, call] of allCalls.entries()) {
+        if (!call.timestamp) {
+            allCalls.delete(id);
+            continue;
         }
+        const callTime = new Date(call.timestamp).getTime();
+        if ((now - callTime) > 5 * 60 * 1000) { // more than 5 minutes
+            allCalls.delete(id);
+        }
+    }
+
+    // Now only recent calls remain
+    let calls = Array.from(allCalls.values())
+        .filter(c => c.timestamp)
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    if (currentFilter !== 'ALL') {
+        calls = calls.filter(c => (c.category || 'OTHERS') === currentFilter);
+    }
+
+    container.innerHTML = '';
+    if (calls.length === 0) {
+        container.innerHTML = `<div class="no-calls">No calls in ${currentFilter}</div>`;
+        return;
+    }
+
+    calls.forEach(call => container.appendChild(createCallElement(call)));
+}
+
 
         function createCallElement(call) {
             const callEl = document.createElement('div');
