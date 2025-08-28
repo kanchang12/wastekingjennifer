@@ -191,8 +191,24 @@ def is_business_hours():
 
 def send_webhook(conversation_id, data, reason):
     try:
-        customer_data = state['collected_data']
-        requests.post(os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1"), json={"data" : customer_data}, timeout=5)
+        # Access the customer data directly from the 'data' parameter
+        collected_data = data.get('collected_data', {})
+        
+        # Ensure name, phone, postcode, and service are included
+        payload = {
+            "conversation_id": conversation_id,
+            "action_type": reason,
+            "customer_name": collected_data.get('firstName', ''),
+            "customer_phone": collected_data.get('phone', ''),
+            "customer_postcode": collected_data.get('postcode', ''),
+            "service_type": collected_data.get('service', ''),
+            "all_data": data  # Send all data for a complete record
+        }
+        
+        webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
+        
+        requests.post(webhook_url, json=payload, timeout=5)
+        
         print(f"Webhook sent successfully for {reason}: {conversation_id}")
         return True
     except Exception as e:
