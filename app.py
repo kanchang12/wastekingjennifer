@@ -248,7 +248,7 @@ class OpenAIQuestionValidator:
             
     def generate_smart_response(self, state, service_type, conversation_history):
         try:
-            prompt = f"You are a {service_type} booking agent. Customer data: {state}. Acknowledge we have all info, and state that you're getting a quote. For quote check the calculation always, if the customer is told X cubic yard but calcaulated one cubic yard, company is going to lose money, transfer the call in that case then, make sure to transfer Be concise (1-2 sentences)."
+            prompt = f"You are a {service_type} booking agent. Customer data: {state}. The text that is given back to say, add more polite and friendly way. Don't just say brilliant lovely great, make a normal polite conversation: Hi thanks for calling. Its nice to talk to you. I would love to help you with that. etc. Acknowledge we have all info, and state that you're getting a quote. For quote check the calculation always, if the customer is told X cubic yard but calcaulated one cubic yard, company is going to lose money, transfer the call in that case then, make sure to transfer Be concise (1-2 sentences)."
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=100, temperature=0.3
             )
