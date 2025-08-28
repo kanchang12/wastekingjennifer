@@ -784,35 +784,54 @@ def user_dashboard_page():
         }
         
         function updateCallsDisplay(calls) {
-            const container = document.getElementById('calls-container');
-            if (!calls || calls.length === 0) {
-                container.innerHTML = '<div class="no-calls"><div style="font-size: 48px; margin-bottom: 20px;">📞</div>Waiting for live calls...</div>';
-                return;
-            }
-            
-            const callsHTML = calls.map(call => {
-                const collected_data = call.collected_data || {};
-                const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
-                return `
-                    <div class="call-item" onclick="selectCall('${call.id}')">
-                        <div class="call-header">
-                            <div class="call-id">${call.id}</div>
-                            <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
-                        </div>
-                        <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
-                        <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
-                        <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
-                        ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                        <div class="transcript">${last_message}</div>
-                        <div style="font-size: 12px; color: #666; margin-top: 10px;">
-                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            
-            container.innerHTML = callsHTML;
+    const container = document.getElementById('calls-container');
+
+    // if no calls at all and never had calls before
+    if ((!calls || calls.length === 0) && lastKnownCalls.length === 0) {
+        container.innerHTML = `
+            <div class="no-calls">
+                <div style="font-size: 48px; margin-bottom: 20px;">📞</div>
+                Waiting for live calls...
+            </div>`;
+        return;
+    }
+
+    // update without wiping entire container
+    calls.forEach(call => {
+        let callEl = document.getElementById(`call-${call.id}`);
+        if (!callEl) {
+            // create a new element if it doesn't exist
+            callEl = document.createElement('div');
+            callEl.className = "call-item";
+            callEl.id = `call-${call.id}`;
+            container.prepend(callEl); // newest first
         }
+        const collected_data = call.collected_data || {};
+        const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
+        callEl.innerHTML = `
+            <div class="call-header">
+                <div class="call-id">${call.id}</div>
+                <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
+            </div>
+            <div><strong>Customer:</strong> ${collected_data.firstName || 'Not provided'}</div>
+            <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
+            <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
+            ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
+            <div class="transcript">${last_message}</div>
+            <div style="font-size: 12px; color: #666; margin-top: 10px;">
+                ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+            </div>
+        `;
+    });
+
+    // remove calls that no longer exist
+    [...container.children].forEach(child => {
+        if (child.id && !calls.some(c => `call-${c.id}` === child.id)) {
+            container.removeChild(child);
+        }
+    });
+}
+
         
         function selectCall(callId) {
             const callData = lastKnownCalls.find(call => call.id === callId);
