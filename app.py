@@ -6,7 +6,7 @@ import traceback
 from datetime import datetime
 from typing import Dict, List, Optional
 from openai import OpenAI
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for
 from flask_cors import CORS
 
 # API Integration
@@ -255,15 +255,19 @@ class DashboardManager:
     
     def update_call(self, conversation_id, data):
         status = 'active' if data.get('stage') not in ['completed', 'transfer_completed'] else 'completed'
-        self.live_calls[conversation_id] = {
+        
+        # Merge new data with existing data to prevent loss of information
+        existing_call = self.live_calls.get(conversation_id, {})
+        merged_data = {
             'id': conversation_id,
-            'timestamp': datetime.now().isoformat(),
-            'stage': data.get('stage', 'unknown'),
-            'collected_data': data.get('collected_data', {}),
-            'history': data.get('history', []),
-            'price': data.get('price'),
+            'timestamp': existing_call.get('timestamp', datetime.now().isoformat()),
+            'stage': data.get('stage', existing_call.get('stage', 'unknown')),
+            'collected_data': {**existing_call.get('collected_data', {}), **data.get('collected_data', {})},
+            'history': data.get('history', existing_call.get('history', [])),
+            'price': data.get('price', existing_call.get('price')),
             'status': status
         }
+        self.live_calls[conversation_id] = merged_data
     
     def get_user_dashboard_data(self):
         active_calls = [call for call in self.live_calls.values() if call['status'] == 'active']
@@ -300,10 +304,9 @@ class BaseAgent:
     def __init__(self):
         self.conversations = {}
         self.question_validator = OpenAIQuestionValidator()
-        self.overuse_counter = {}
 
     def process_message(self, message, conversation_id):
-        state = self.conversations.get(conversation_id, {'history': [], 'collected_data': {}})
+        state = self.conversations.get(conversation_id, {'history': [], 'collected_data': {}, 'stage': 'initial'})
         state['history'].append(f"Customer: {message}")
         
         special_response = self.check_special_rules(message, state)
@@ -320,6 +323,7 @@ class BaseAgent:
         response = self.get_next_response(message, state, conversation_id)
         
         state['history'].append(f"Agent: {response}")
+        state['stage'] = self.get_stage_from_response(response, state)
         self.conversations[conversation_id] = state.copy()
         
         return response
@@ -377,8 +381,7 @@ class BaseAgent:
         if any(word in message_lower for word in ['skip', 'skip hire', 'container hire']): data['service'] = 'skip'
         elif any(phrase in message_lower for phrase in ['house clearance', 'man and van', 'mav', 'furniture', 'appliance', 'van collection']): data['service'] = 'mav'
         elif any(phrase in message_lower for phrase in ['grab hire', 'grab lorry', '8 wheeler', '6 wheeler', 'soil removal', 'rubble removal']): data['service'] = 'grab'
-
-        # Extracting skip type if available
+        
         if data.get('service') == 'skip':
             if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']): data['type'] = '8yd'
             elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']): data['type'] = '6yd'
@@ -386,6 +389,17 @@ class BaseAgent:
             elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']): data['type'] = '12yd'
         
         return data
+
+    def get_stage_from_response(self, response, state):
+        if "booking confirmed" in response.lower():
+            return 'completed'
+        if "unable to get pricing" in response.lower() or "technical issue" in response.lower():
+            return 'transfer_completed'
+        if "Would you like to book this?" in response:
+            return 'booking'
+        if "What's your name?" in response or "What's your complete postcode?" in response or "What's the best phone number to contact you on?" in response:
+            return 'collecting_info'
+        return 'processing'
 
     def should_book(self, message):
         booking_phrases = ['payment link', 'pay link', 'book it', 'book this', 'complete booking', 'proceed with booking', 'confirm booking']
@@ -498,16 +512,20 @@ class SkipAgent(BaseAgent):
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['skip'])
 
-        # Fix: Check for price BEFORE asking for more info
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
+
+        # Corrected Logic: Only check for pricing AFTER all required info is collected
         if has_all_required_data and not state.get('price'):
             if state.get('collected_data', {}).get('type') in ['10yd', '12yd'] and any(material in message.lower() for material in ['soil', 'rubble', 'concrete', 'bricks', 'heavy']):
                  return SKIP_HIRE_RULES['A2_heavy_materials']['heavy_materials_max']
+            
             return self.get_pricing(state, conversation_id, wants_to_book)
         
         if wants_to_book and state.get('price'):
             return self.complete_booking(state, conversation_id)
         
-        # Now handle specific rules and questions
         if 'plasterboard' in message.lower(): return SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
         if any(item in message.lower() for item in ['fridge', 'mattress', 'freezer']): return SKIP_HIRE_RULES['A5_prohibited_items']['restrictions_response']
         if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return SKIP_HIRE_RULES['A5_prohibited_items']['upholstery_alternative']
@@ -516,13 +534,7 @@ class SkipAgent(BaseAgent):
             return f"The following items may not be permitted in skips, or may carry a surcharge: {prohibited_items}"
         if 'permit' in message.lower() and any(term in message.lower() for term in ['cost', 'price', 'charge']):
              return "We'll arrange the permit for you and include the cost in your quote. The price varies by council."
-
-        # Finally, check for missing info
-        missing_info_response = self.check_for_missing_info(state, self.service_type)
-        if missing_info_response:
-            return missing_info_response
             
-        # Fallback if all is collected but for some reason we missed pricing
         return self.get_pricing(state, conversation_id, wants_to_book)
 
 class MAVAgent(BaseAgent):
@@ -536,9 +548,6 @@ class MAVAgent(BaseAgent):
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['mav'])
 
-        if wants_to_book and state.get('price'):
-            return self.complete_booking(state, conversation_id)
-
         if has_all_required_data and not state.get('price'):
             if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
                 return MAV_RULES['B2_heavy_materials']['script']
@@ -547,6 +556,9 @@ class MAVAgent(BaseAgent):
                  return MAV_RULES['B1_information_gathering']['cubic_yard_explanation']
             
             return self.get_pricing(state, conversation_id, wants_to_book)
+
+        if wants_to_book and state.get('price'):
+            return self.complete_booking(state, conversation_id)
 
         if state.get('price'):
             vat_note = " (+ VAT)" if MAV_RULES['B1_information_gathering'].get('vat_note') else ""
@@ -604,8 +616,7 @@ class GrabAgent(BaseAgent):
         if missing_info_response:
             return missing_info_response
         
-        return f"{CONVERSATION_STANDARDS['greeting_response']}. I can help you with grab hire. Can I take your name please?"
-
+        return self.get_pricing(state, conversation_id, wants_to_book)
 
 # --- FLASK APP AND ROUTING ---
 app = Flask(__name__)
@@ -645,59 +656,7 @@ def route_to_agent(message, conversation_id):
 
 @app.route('/')
 def index():
-    return render_template_string("""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WasteKing Complete AI System</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-        .container { background: white; border-radius: 20px; padding: 60px 40px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); text-align: center; max-width: 600px; width: 90%; }
-        .logo { font-size: 48px; font-weight: bold; color: #333; margin-bottom: 20px; background: linear-gradient(45deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .subtitle { font-size: 18px; color: #666; margin-bottom: 50px; }
-        .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 30px; margin-top: 40px; }
-        .dashboard-card { background: #f8f9fa; border-radius: 15px; padding: 30px 20px; text-decoration: none; color: #333; transition: all 0.3s ease; border: 2px solid transparent; }
-        .dashboard-card:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: #667eea; }
-        .dashboard-icon { font-size: 48px; margin-bottom: 20px; }
-        .dashboard-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-        .dashboard-desc { color: #666; font-size: 14px; line-height: 1.5; }
-        .status-indicator { display: inline-block; width: 12px; height: 12px; background: #28a745; border-radius: 50%; margin-left: 10px; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-        .version { margin-top: 40px; font-size: 12px; color: #999; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">WasteKing AI</div>
-        <div class="subtitle">
-            Complete System with Webhooks + Dashboard Fixes
-            <span class="status-indicator"></span>
-        </div>
-        <div class="dashboard-grid">
-            <a href="/dashboard/user" class="dashboard-card">
-                <div class="dashboard-icon">📞</div>
-                <div class="dashboard-title">Live Calls Dashboard</div>
-                <div class="dashboard-desc">Real-time call monitoring, live transcripts, auto-form filling (2-second refresh)</div>
-            </a>
-            <a href="/dashboard/manager" class="dashboard-card">
-                <div class="dashboard-icon">📊</div>
-                <div class="dashboard-title">Manager Analytics</div>
-                <div class="dashboard-desc">Individual call details, conversion rates, performance metrics, webhooks tracking</div>
-            </a>
-            <a href="/api/test-interface" class="dashboard-card">
-                <div class="dashboard-icon">🧪</div>
-                <div class="dashboard-title">Testing Interface</div>
-                <div class="dashboard-desc">Test conversations, API calls, webhook delivery testing</div>
-            </a>
-        </div>
-        <div class="version">Complete System | All Fixes Applied | Webhook Integration Active</div>
-    </div>
-</body>
-</html>"""
-)
+    return redirect(url_for('user_dashboard'))
 
 @app.route('/api/wasteking', methods=['POST'])
 def process_message_endpoint():
@@ -715,7 +674,7 @@ def process_message_endpoint():
         state = shared_conversations.get(conversation_id, {})
         dashboard_manager.update_call(conversation_id, state)
         
-        return jsonify({"success": True, "message": response, "conversation_id": conversation_id, "timestamp": datetime.now().isoformat()})
+        return jsonify({"success": True, "message": response, "conversation_id": conversation_id, "timestamp": datetime.now().isoformat(), 'stage': state.get('stage'), 'price': state.get('price')})
         
     except Exception as e:
         traceback.print_exc()
@@ -803,16 +762,23 @@ def user_dashboard():
                 <label class="form-label">Price Quote</label>
                 <input type="text" class="form-input" id="price-quote" readonly>
             </div>
+             <div class="form-group">
+                <label class="form-label">Transcript</label>
+                <textarea class="form-input" id="full-transcript" readonly style="height: 200px;"></textarea>
+            </div>
         </div>
     </div>
 
     <script>
+        let lastKnownCalls = [];
+
         function loadDashboard() {
             fetch('/api/dashboard/user')
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        updateCallsDisplay(data.data.live_calls);
+                        lastKnownCalls = data.data.live_calls;
+                        updateCallsDisplay(lastKnownCalls);
                         document.getElementById('active-calls').textContent = `${data.data.active_calls} Active Calls`;
                         document.getElementById('last-update').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
                     }
@@ -829,9 +795,9 @@ def user_dashboard():
             
             const callsHTML = calls.map(call => {
                 const collected_data = call.collected_data || {};
-                const transcript = (call.history || []).slice(-2).join('<br>') || 'No transcript yet...';
+                const last_message = (call.history || []).slice(-1)[0] || 'No transcript yet...';
                 return `
-                    <div class="call-item" onclick="selectCall('${call.id}', ${JSON.stringify(call).replace(/"/g, '&quot;')})">
+                    <div class="call-item" onclick="selectCall('${call.id}')">
                         <div class="call-header">
                             <div class="call-id">${call.id}</div>
                             <div class="stage stage-${call.stage || 'unknown'}">${call.stage || 'Unknown'}</div>
@@ -840,7 +806,7 @@ def user_dashboard():
                         <div><strong>Service:</strong> ${collected_data.service || 'Identifying...'}</div>
                         <div><strong>Postcode:</strong> ${collected_data.postcode || 'Not provided'}</div>
                         ${call.price ? `<div><strong>Price:</strong> ${call.price}</div>` : ''}
-                        <div class="transcript">${transcript}</div>
+                        <div class="transcript">${last_message}</div>
                         <div style="font-size: 12px; color: #666; margin-top: 10px;">
                             ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
                         </div>
@@ -851,22 +817,26 @@ def user_dashboard():
             container.innerHTML = callsHTML;
         }
         
-        function selectCall(callId, callData) {
+        function selectCall(callId) {
+            const callData = lastKnownCalls.find(call => call.id === callId);
+            if (!callData) {
+                console.error("Call data not found for ID:", callId);
+                return;
+            }
             const collected = callData.collected_data || {};
-            const fields = {
-                'customer-name': collected.firstName,
-                'customer-phone': collected.phone,
-                'customer-postcode': collected.postcode,
-                'service-type': collected.service,
-                'current-stage': callData.stage,
-                'price-quote': callData.price
-            };
             
-            Object.keys(fields).forEach(fieldId => {
+            document.getElementById('customer-name').value = collected.firstName || '';
+            document.getElementById('customer-phone').value = collected.phone || '';
+            document.getElementById('customer-postcode').value = collected.postcode || '';
+            document.getElementById('service-type').value = collected.service || '';
+            document.getElementById('current-stage').value = callData.stage || '';
+            document.getElementById('price-quote').value = callData.price || '';
+            document.getElementById('full-transcript').value = (callData.history || []).join('\\n');
+            
+            const fields = ['customer-name', 'customer-phone', 'customer-postcode', 'service-type', 'current-stage', 'price-quote'];
+            fields.forEach(fieldId => {
                 const input = document.getElementById(fieldId);
-                const value = fields[fieldId] || '';
-                input.value = value;
-                input.classList.toggle('filled', !!value);
+                input.classList.toggle('filled', !!input.value);
             });
         }
         
@@ -1061,7 +1031,7 @@ def test_interface():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WasteKing System Test</title>
+    <title>Test WasteKing System</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
         .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
@@ -1105,7 +1075,507 @@ def test_interface():
         }
         
         function testComplaint() {
-            sendMessage("I want to make a complaint about your service");
+            sendMessage("I want to make a complaint about my service");
+        }
+        
+        function testDirector() {
+            sendMessage("I need to speak to Glenn Currie");
+        }
+        
+        function sendMessage(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = 'Processing...';
+            responseDiv.className = 'response';
+            
+            fetch('/api/wasteking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    customerquestion: message,
+                    conversation_id: currentConversationId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentConversationId = data.conversation_id;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
+                } else {
+                    responseDiv.className = 'response error';
+                    responseDiv.textContent = `Error: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = `Network Error: ${error.message}`;
+            });
+        }
+        
+        async function runFullTest() {
+            const resultsDiv = document.getElementById('full-test-results');
+            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
+            
+            const messages = [
+                "Hi, I need a skip",
+                "Abdul",
+                "LS1 4ED",
+                "07823656762",
+                "No prohibited items",
+                "Yes, I want to book it"
+            ];
+            
+            currentConversationId = null;
+            let results = [];
+            
+            for (let i = 0; i < messages.length; i++) {
+                try {
+                    const response = await fetch('/api/wasteking', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            customerquestion: messages[i],
+                            conversation_id: currentConversationId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    currentConversationId = data.conversation_id;
+                    
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        response: data.message,
+                        stage: data.stage,
+                        price: data.price,
+                        success: data.success
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                } catch (error) {
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        error: error.message
+                    });
+                }
+            }
+            
+            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
+                    <strong>Step ${result.step}: ${result.message}</strong><br>
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/api/dashboard/user')
+def user_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_user_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
+
+@app.route('/api/dashboard/manager')
+def manager_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_manager_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
+
+@app.route('/api/test-interface')
+def test_interface():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WasteKing System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WasteKing System Test</h1>
+        
+        <h3>Test Messages</h3>
+        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
+        <br>
+        <button onclick="testMessage()">Test Message</button>
+        <button onclick="testPricing()">Test Pricing Flow</button>
+        <button onclick="testComplaint()">Test Complaint</button>
+        <button onclick="testDirector()">Test Director Request</button>
+        
+        <div id="response" class="response" style="display: none;"></div>
+        
+        <h3>Pre-built Test Scenarios</h3>
+        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
+        <div id="full-test-results"></div>
+    </div>
+
+    <script>
+        let currentConversationId = null;
+        
+        function testMessage() {
+            const message = document.getElementById('test-message').value;
+            sendMessage(message);
+        }
+        
+        function testPricing() {
+            currentConversationId = null;
+            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
+        }
+        
+        function testComplaint() {
+            sendMessage("I want to make a complaint about my service");
+        }
+        
+        function testDirector() {
+            sendMessage("I need to speak to Glenn Currie");
+        }
+        
+        function sendMessage(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = 'Processing...';
+            responseDiv.className = 'response';
+            
+            fetch('/api/wasteking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    customerquestion: message,
+                    conversation_id: currentConversationId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentConversationId = data.conversation_id;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
+                } else {
+                    responseDiv.className = 'response error';
+                    responseDiv.textContent = `Error: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = `Network Error: ${error.message}`;
+            });
+        }
+        
+        async function runFullTest() {
+            const resultsDiv = document.getElementById('full-test-results');
+            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
+            
+            const messages = [
+                "Hi, I need a skip",
+                "Abdul",
+                "LS1 4ED",
+                "07823656762",
+                "No prohibited items",
+                "Yes, I want to book it"
+            ];
+            
+            currentConversationId = null;
+            let results = [];
+            
+            for (let i = 0; i < messages.length; i++) {
+                try {
+                    const response = await fetch('/api/wasteking', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            customerquestion: messages[i],
+                            conversation_id: currentConversationId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    currentConversationId = data.conversation_id;
+                    
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        response: data.message,
+                        stage: data.stage,
+                        price: data.price,
+                        success: data.success
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                } catch (error) {
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        error: error.message
+                    });
+                }
+            }
+            
+            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
+                    <strong>Step ${result.step}: ${result.message}</strong><br>
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/api/dashboard/user')
+def user_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_user_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
+
+@app.route('/api/dashboard/manager')
+def manager_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_manager_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
+
+@app.route('/api/test-interface')
+def test_interface():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WasteKing System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WasteKing System Test</h1>
+        
+        <h3>Test Messages</h3>
+        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
+        <br>
+        <button onclick="testMessage()">Test Message</button>
+        <button onclick="testPricing()">Test Pricing Flow</button>
+        <button onclick="testComplaint()">Test Complaint</button>
+        <button onclick="testDirector()">Test Director Request</button>
+        
+        <div id="response" class="response" style="display: none;"></div>
+        
+        <h3>Pre-built Test Scenarios</h3>
+        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
+        <div id="full-test-results"></div>
+    </div>
+
+    <script>
+        let currentConversationId = null;
+        
+        function testMessage() {
+            const message = document.getElementById('test-message').value;
+            sendMessage(message);
+        }
+        
+        function testPricing() {
+            currentConversationId = null;
+            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
+        }
+        
+        function testComplaint() {
+            sendMessage("I want to make a complaint about my service");
+        }
+        
+        function testDirector() {
+            sendMessage("I need to speak to Glenn Currie");
+        }
+        
+        function sendMessage(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = 'Processing...';
+            responseDiv.className = 'response';
+            
+            fetch('/api/wasteking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    customerquestion: message,
+                    conversation_id: currentConversationId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentConversationId = data.conversation_id;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
+                } else {
+                    responseDiv.className = 'response error';
+                    responseDiv.textContent = `Error: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = `Network Error: ${error.message}`;
+            });
+        }
+        
+        async function runFullTest() {
+            const resultsDiv = document.getElementById('full-test-results');
+            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
+            
+            const messages = [
+                "Hi, I need a skip",
+                "Abdul",
+                "LS1 4ED",
+                "07823656762",
+                "No prohibited items",
+                "Yes, I want to book it"
+            ];
+            
+            currentConversationId = null;
+            let results = [];
+            
+            for (let i = 0; i < messages.length; i++) {
+                try {
+                    const response = await fetch('/api/wasteking', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            customerquestion: messages[i],
+                            conversation_id: currentConversationId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    currentConversationId = data.conversation_id;
+                    
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        response: data.message,
+                        stage: data.stage,
+                        price: data.price,
+                        success: data.success
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                } catch (error) {
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        error: error.message
+                    });
+                }
+            }
+            
+            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
+                    <strong>Step ${result.step}: ${result.message}</strong><br>
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/api/dashboard/user')
+def user_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_user_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
+
+@app.route('/api/dashboard/manager')
+def manager_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_manager_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
+
+@app.route('/api/test-interface')
+def test_interface():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WasteKing System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WasteKing System Test</h1>
+        
+        <h3>Test Messages</h3>
+        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
+        <br>
+        <button onclick="testMessage()">Test Message</button>
+        <button onclick="testPricing()">Test Pricing Flow</button>
+        <button onclick="testComplaint()">Test Complaint</button>
+        <button onclick="testDirector()">Test Director Request</button>
+        
+        <div id="response" class="response" style="display: none;"></div>
+        
+        <h3>Pre-built Test Scenarios</h3>
+        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
+        <div id="full-test-results"></div>
+    </div>
+
+    <script>
+        let currentConversationId = null;
+        
+        function testMessage() {
+            const message = document.getElementById('test-message').value;
+            sendMessage(message);
+        }
+        
+        function testPricing() {
+            currentConversationId = null;
+            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
+        }
+        
+        function testComplaint() {
+            sendMessage("I want to make a complaint about my service");
         }
         
         function testDirector() {
@@ -1212,6 +1682,7 @@ def user_dashboard_api():
         dashboard_data = dashboard_manager.get_user_dashboard_data()
         return jsonify({"success": True, "data": dashboard_data})
     except Exception as e:
+        traceback.print_exc()
         return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
 
 @app.route('/api/dashboard/manager')
@@ -1220,6 +1691,175 @@ def manager_dashboard_api():
         dashboard_data = dashboard_manager.get_manager_dashboard_data()
         return jsonify({"success": True, "data": dashboard_data})
     except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
+
+@app.route('/api/test-interface')
+def test_interface():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WasteKing System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WasteKing System Test</h1>
+        
+        <h3>Test Messages</h3>
+        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
+        <br>
+        <button onclick="testMessage()">Test Message</button>
+        <button onclick="testPricing()">Test Pricing Flow</button>
+        <button onclick="testComplaint()">Test Complaint</button>
+        <button onclick="testDirector()">Test Director Request</button>
+        
+        <div id="response" class="response" style="display: none;"></div>
+        
+        <h3>Pre-built Test Scenarios</h3>
+        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
+        <div id="full-test-results"></div>
+    </div>
+
+    <script>
+        let currentConversationId = null;
+        
+        function testMessage() {
+            const message = document.getElementById('test-message').value;
+            sendMessage(message);
+        }
+        
+        function testPricing() {
+            currentConversationId = null;
+            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
+        }
+        
+        function testComplaint() {
+            sendMessage("I want to make a complaint about my service");
+        }
+        
+        function testDirector() {
+            sendMessage("I need to speak to Glenn Currie");
+        }
+        
+        function sendMessage(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = 'Processing...';
+            responseDiv.className = 'response';
+            
+            fetch('/api/wasteking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    customerquestion: message,
+                    conversation_id: currentConversationId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentConversationId = data.conversation_id;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
+                } else {
+                    responseDiv.className = 'response error';
+                    responseDiv.textContent = `Error: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = `Network Error: ${error.message}`;
+            });
+        }
+        
+        async function runFullTest() {
+            const resultsDiv = document.getElementById('full-test-results');
+            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
+            
+            const messages = [
+                "Hi, I need a skip",
+                "Abdul",
+                "LS1 4ED",
+                "07823656762",
+                "No prohibited items",
+                "Yes, I want to book it"
+            ];
+            
+            currentConversationId = null;
+            let results = [];
+            
+            for (let i = 0; i < messages.length; i++) {
+                try {
+                    const response = await fetch('/api/wasteking', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            customerquestion: messages[i],
+                            conversation_id: currentConversationId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    currentConversationId = data.conversation_id;
+                    
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        response: data.message,
+                        stage: data.stage,
+                        price: data.price,
+                        success: data.success
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                } catch (error) {
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        error: error.message
+                    });
+                }
+            }
+            
+            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
+                    <strong>Step ${result.step}: ${result.message}</strong><br>
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/api/dashboard/user')
+def user_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_user_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
+
+@app.route('/api/dashboard/manager')
+def manager_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_manager_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        traceback.print_exc()
         return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
 
 @app.route('/api/test-interface')
