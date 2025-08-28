@@ -677,7 +677,6 @@ def process_message_endpoint():
         traceback.print_exc()
         return jsonify({"success": False, "message": "I'll connect you with our team who can help immediately.", "error": str(e)}), 500
 
-# Fix: Renamed the function to user_dashboard_page to resolve the conflict
 @app.route('/dashboard/user')
 def user_dashboard_page():
     return render_template_string("""
@@ -840,6 +839,168 @@ def user_dashboard_page():
         
         document.addEventListener('DOMContentLoaded', loadDashboard);
         setInterval(loadDashboard, 2000);
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/dashboard/manager')
+def manager_dashboard_page():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WasteKing - Manager Analytics</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #f5f6fa; }
+        .header { background: linear-gradient(135deg, #764ba2, #667eea); color: white; padding: 25px; }
+        .main { display: grid; grid-template-columns: 1fr 400px; gap: 25px; padding: 25px; }
+        .metrics-section { display: grid; grid-template-rows: auto 1fr; gap: 20px; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.05); }
+        .metric-value { font-size: 36px; font-weight: bold; margin-bottom: 10px; }
+        .metric-label { color: #666; font-size: 16px; }
+        .calls-section { background: white; border-radius: 15px; padding: 25px; max-height: 80vh; overflow-y: auto; }
+        .call-item { background: #f8f9fa; border-radius: 10px; padding: 15px; margin-bottom: 10px; border-left: 4px solid #667eea; }
+        .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .call-id { font-weight: bold; font-size: 14px; }
+        .call-status { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+        .status-active { background: #d4edda; color: #155724; }
+        .status-completed { background: #cce7ff; color: #004085; }
+        .status-transfer_completed { background: #fff3cd; color: #856404; }
+        .call-details { font-size: 13px; color: #666; }
+        .call-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 12px; }
+        .refresh-btn { position: fixed; top: 100px; right: 25px; background: #667eea; color: white; border: none; padding: 12px 24px; border-radius: 25px; cursor: pointer; }
+        .section-title { font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+        .performance-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+        .perf-excellent { background: #28a745; }
+        .perf-good { background: #ffc107; }
+        .perf-poor { background: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Manager Analytics Dashboard</h1>
+        <p>Real-time insights with individual call details and webhook tracking</p>
+    </div>
+    
+    <button class="refresh-btn" onclick="loadAnalytics()">Refresh</button>
+    
+    <div class="main">
+        <div class="metrics-section">
+            <div class="metrics-grid">
+                <div class="card">
+                    <div class="metric-value" style="color: #667eea;" id="total-calls">0</div>
+                    <div class="metric-label">Total Calls Today</div>
+                </div>
+                
+                <div class="card">
+                    <div class="metric-value" style="color: #4caf50;" id="completed-calls">0</div>
+                    <div class="metric-label">Completed Calls</div>
+                </div>
+                
+                <div class="card">
+                    <div class="metric-value" style="color: #ff9800;" id="conversion-rate">0%</div>
+                    <div class="metric-label">Conversion Rate</div>
+                </div>
+                
+                <div class="card">
+                    <div class="metric-value" style="color: #e91e63;" id="active-now">0</div>
+                    <div class="metric-label">Active Right Now</div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>Service Performance Breakdown</h3>
+                <div id="service-breakdown">Loading...</div>
+            </div>
+        </div>
+        
+        <div class="calls-section">
+            <div class="section-title">Individual Call Details</div>
+            <div id="calls-list">Loading call details...</div>
+        </div>
+    </div>
+
+    <script>
+        function loadAnalytics() {
+            fetch('/api/dashboard/manager')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('total-calls').textContent = data.data.total_calls;
+                        document.getElementById('completed-calls').textContent = data.data.completed_calls;
+                        document.getElementById('conversion-rate').textContent = data.data.conversion_rate.toFixed(1) + '%';
+                        document.getElementById('active-now').textContent = (data.data.active_calls || []).length;
+                        
+                        const services = data.data.service_breakdown || {};
+                        document.getElementById('service-breakdown').innerHTML = Object.entries(services).map(([service, count]) => {
+                            const percentage = data.data.total_calls > 0 ? ((count / data.data.total_calls) * 100).toFixed(1) : 0;
+                            return `
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+                                    <div style="flex: 1;">
+                                        <strong>${service || 'Unknown'}</strong>
+                                        <div style="font-size: 12px; color: #666;">${percentage}% of calls</div>
+                                    </div>
+                                    <div style="font-size: 24px; font-weight: bold; color: #667eea;">${count}</div>
+                                </div>
+                            `;
+                        }).join('') || '<div style="color: #666;">No service data yet</div>';
+                        
+                        updateCallsList(data.data.recent_calls || []);
+                    }
+                })
+                .catch(error => {
+                    console.error('Analytics error:', error);
+                });
+        }
+        
+        function updateCallsList(calls) {
+            const container = document.getElementById('calls-list');
+            if (!calls || calls.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">No calls yet today</div>';
+                return;
+            }
+            
+            const callsHTML = calls.slice().reverse().map(call => {
+                const statusClass = call.status === 'active' ? 'status-active' : call.status === 'completed' ? 'status-completed' : 'status-transfer_completed';
+                const perfIndicator = call.status === 'completed' && call.price ? 'perf-excellent' : call.status === 'active' ? 'perf-good' : 'perf-poor';
+                const duration = call.timestamp ? Math.round((new Date() - new Date(call.timestamp)) / 1000 / 60) : 0;
+                const collected = call.collected_data || {};
+                
+                return `
+                    <div class="call-item">
+                        <div class="call-header">
+                            <div class="call-id">
+                                <span class="performance-indicator ${perfIndicator}"></span>
+                                ${call.id}
+                            </div>
+                            <div class="call-status ${statusClass}">${call.status}</div>
+                        </div>
+                        <div class="call-details">
+                            <strong>Customer:</strong> ${collected.firstName || 'Not provided'}<br>
+                            <strong>Service:</strong> ${collected.service || 'Identifying...'}<br>
+                            <strong>Postcode:</strong> ${collected.postcode || 'Not provided'}
+                            ${call.price ? `<br><strong>Price:</strong> ${call.price}` : ''}
+                            ${call.booking_ref ? `<br><strong>Booking:</strong> ${call.booking_ref}` : ''}
+                        </div>
+                        <div class="call-metrics">
+                            <div><strong>Duration:</strong> ${duration}m</div>
+                            <div><strong>Stage:</strong> ${call.stage || 'Unknown'}</div>
+                            <div><strong>Messages:</strong> ${(call.history || []).length}</div>
+                        </div>
+                        <div style="font-size: 11px; color: #999; margin-top: 8px;">
+                            ${call.timestamp ? new Date(call.timestamp).toLocaleString() : 'Unknown time'}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = callsHTML;
+        }
+        
+        document.addEventListener('DOMContentLoaded', loadAnalytics);
+        setInterval(loadAnalytics, 15000);
     </script>
 </body>
 </html>
