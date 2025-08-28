@@ -232,7 +232,7 @@ class OpenAIQuestionValidator:
             
     def generate_smart_response(self, state, service_type, conversation_history):
         try:
-            prompt = f"You are a {service_type} booking agent. Customer data: {state}. Acknowledge we have all info, and state that you're getting a quote. Be concise (1-2 sentences)."
+            prompt = f"You are a {service_type} booking agent. Customer data: {state}. Acknowledge we have all info, and state that you're getting a quote. If the customer asks for x cubic yard and the price given is for one cubic yard, you must make python choose the value for X cubic yard onlyu, so make sure the values changes to x .Be concise (1-2 sentences)."
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=100, temperature=0.3
             )
