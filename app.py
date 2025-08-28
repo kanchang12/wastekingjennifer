@@ -35,19 +35,19 @@ TRANSFER_RULES = {
         'triggers': ['glenn currie', 'director', 'speak to glenn'],
         'office_hours': "I am sorry, Glenn is not available, may I take your details and Glenn will call you back?",
         'out_of_hours': "I can take your details and have our director call you back first thing tomorrow",
-        'sms_notify': '+447394642517'
+        'sms_notify': '+447823656762'
     },
     'complaints': {
         'triggers': ['complaint', 'complain', 'unhappy', 'disappointed', 'frustrated', 'angry'],
         'office_hours': "I understand your frustration, please bear with me while I transfer you to the appropriate person.",
         'out_of_hours': "I understand your frustration. I can take your details and have our customer service team call you back first thing tomorrow.",
         'action': 'TRANSFER',
-        'sms_notify': '+447394642517'
+        'sms_notify': '+447823656762'
     },
     'specialist_services': {
         'services': ['hazardous waste disposal', 'asbestos removal', 'asbestos collection', 'weee electrical waste', 'chemical disposal', 'medical waste', 'trade waste'],
         'office_hours': 'Transfer immediately',
-        'out_of_hours': 'Take details + SMS notification to +447394642517'
+        'out_of_hours': 'Take details + SMS notification to +447823656762'
     }
 }
 
@@ -163,7 +163,7 @@ GRAB_RULES = {
     }
 }
 
-SMS_NOTIFICATION = '+447394642517'
+SMS_NOTIFICATION = '+447823656762'
 SURCHARGE_ITEMS = { 'fridges_freezers': 20, 'mattresses': 15, 'upholstered_furniture': 15, 'sofas': 15 }
 REQUIRED_FIELDS = {
     'skip': ['firstName', 'postcode', 'phone'],
@@ -173,15 +173,23 @@ REQUIRED_FIELDS = {
 
 CONVERSATION_STANDARDS = {
     'greeting_response': "I can help with that",
-    'avoid_overuse': ['great', 'perfect', 'brilliant'],
+    'avoid_overuse': ['great', 'perfect', 'brilliant', 'no worries', 'lovely'],
     'closing': "Is there anything else I can help with? Thanks for trusting Waste King",
     'location_response': "I am based in the head office although we have depots nationwide and local to you.",
     'human_request': "Yes I can see if someone is available. What is your company name? What is the call regarding?"
 }
 
 # --- WEBHOOK & SMS NOTIFICATION ---
+def is_business_hours():
+    now = datetime.now()
+    day = now.weekday()
+    hour = now.hour + (now.minute / 60.0)
+    if day < 4: return 8 <= hour < 17
+    elif day == 4: return 8 <= hour < 16.5
+    elif day == 5: return 9 <= hour < 12
+    return False
+
 def send_webhook(conversation_id, data, reason):
-    """Sends a payload to the webhook URL for events requiring follow-up."""
     try:
         payload = {
             "conversation_id": conversation_id,
@@ -199,19 +207,15 @@ def send_webhook(conversation_id, data, reason):
         return False
 
 def send_sms(name, phone, booking_ref, price, payment_link):
-    """Sends an SMS with payment link using Twilio (if configured)."""
     try:
         twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
         twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
         twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
-        
         if twilio_sid and twilio_token and twilio_phone:
             from twilio.rest import Client
             client = Client(twilio_sid, twilio_token)
-            
             formatted_phone = f"+44{phone[1:]}" if phone.startswith('0') else phone
             message = f"Hi {name}, your booking confirmed! Ref: {booking_ref}, Price: {price}. Pay here: {payment_link}"
-            
             client.messages.create(body=message, from_=twilio_phone, to=formatted_phone)
             print(f"✅ SMS sent to {phone}")
     except Exception as e:
@@ -222,23 +226,6 @@ class OpenAIQuestionValidator:
     def __init__(self):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
     
-    def check_all_questions_answered(self, state, service_type, conversation_history):
-        try:
-            required_fields = REQUIRED_FIELDS.get(service_type, [])
-            if not all(state.get(field) for field in required_fields):
-                return False
-            
-            prompt = f"You are an AI assistant. Required info: {json.dumps(state)}. Are all required fields present? Respond with only TRUE or FALSE."
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0
-            )
-            result = response.choices[0].message.content.strip().upper()
-            return result == "TRUE"
-        except Exception as e:
-            print(f"OpenAI validation error: {e}")
-            required_fields = REQUIRED_FIELDS.FIELDS.get(service_type, [])
-            return all(state.get(field) for field in required_fields)
-            
     def check_duplicate_question(self, question, conversation_history):
         try:
             prompt = f"Analyze this conversation history: {conversation_history}. Have we already asked for the same information as this question: '{question}'? Respond with only TRUE or FALSE."
@@ -313,6 +300,7 @@ class BaseAgent:
     def __init__(self):
         self.conversations = {}
         self.question_validator = OpenAIQuestionValidator()
+        self.overuse_counter = {}
 
     def process_message(self, message, conversation_id):
         state = self.conversations.get(conversation_id, {'history': [], 'collected_data': {}})
@@ -322,7 +310,7 @@ class BaseAgent:
         if special_response:
             state['history'].append(f"Agent: {special_response['response']}")
             state['stage'] = special_response.get('stage', 'transfer_completed')
-            send_webhook(conversation_id, {'collected_data': state['collected_data'], 'history': state['history']}, special_response.get('reason', 'transfer'))
+            send_webhook(conversation_id, {'collected_data': state['collected_data'], 'history': state['history'], 'stage': state['stage']}, special_response.get('reason', 'transfer'))
             self.conversations[conversation_id] = state.copy()
             return special_response['response']
 
@@ -389,6 +377,13 @@ class BaseAgent:
         if any(word in message_lower for word in ['skip', 'skip hire', 'container hire']): data['service'] = 'skip'
         elif any(phrase in message_lower for phrase in ['house clearance', 'man and van', 'mav', 'furniture', 'appliance', 'van collection']): data['service'] = 'mav'
         elif any(phrase in message_lower for phrase in ['grab hire', 'grab lorry', '8 wheeler', '6 wheeler', 'soil removal', 'rubble removal']): data['service'] = 'grab'
+
+        # Extracting skip type if available
+        if data.get('service') == 'skip':
+            if any(size in message_lower for size in ['8-yard', '8 yard', '8yd', 'eight yard', 'eight-yard']): data['type'] = '8yd'
+            elif any(size in message_lower for size in ['6-yard', '6 yard', '6yd']): data['type'] = '6yd'
+            elif any(size in message_lower for size in ['4-yard', '4 yard', '4yd']): data['type'] = '4yd'
+            elif any(size in message_lower for size in ['12-yard', '12 yard', '12yd']): data['type'] = '12yd'
         
         return data
 
@@ -415,9 +410,9 @@ class BaseAgent:
                 return "Unable to get pricing right now. Let me put you through to our team."
             
             booking_ref = booking_result['booking_ref']
-            service_type = state.get('type')
+            service_type = state.get('collected_data', {}).get('type')
             
-            price_result = get_pricing(booking_ref, state.get('postcode'), state.get('service'), service_type)
+            price_result = get_pricing(booking_ref, state.get('collected_data', {}).get('postcode'), state.get('collected_data', {}).get('service'), service_type)
             if not price_result.get('success'):
                 send_webhook(conversation_id, state, 'api_pricing_failure')
                 return "I'm having trouble finding pricing for that. Could you please confirm your complete postcode is correct?"
@@ -425,11 +420,11 @@ class BaseAgent:
             price = price_result['price']
             price_num = float(price.replace('£', '').replace(',', ''))
             state['price'] = price
-            state['type'] = price_result.get('type', service_type)
+            state['collected_data']['type'] = price_result.get('type', service_type)
             state['booking_ref'] = booking_ref
             self.conversations[conversation_id] = state
             
-            if self.needs_transfer(state.get('service'), price_num):
+            if self.needs_transfer(state.get('collected_data', {}).get('service'), price_num):
                 send_webhook(conversation_id, state, 'high_price_transfer')
                 if is_business_hours():
                     return "For this size job, let me put you through to our specialist team for the best service."
@@ -439,8 +434,8 @@ class BaseAgent:
             if wants_to_book:
                 return self.complete_booking(state, conversation_id)
             else:
-                vat_note = " (+ VAT)" if state.get('service') == 'skip' else ""
-                return f"{state.get('type')} {state.get('service')} at {state['postcode']}: {state['price']}{vat_note}. Would you like to book this?"
+                vat_note = " (+ VAT)" if state.get('collected_data', {}).get('service') == 'skip' else ""
+                return f"{state.get('collected_data', {}).get('type')} {state.get('collected_data', {}).get('service')} at {state['collected_data']['postcode']}: {state['price']}{vat_note}. Would you like to book this?"
                 
         except Exception as e:
             send_webhook(conversation_id, state, 'api_error')
@@ -453,15 +448,10 @@ class BaseAgent:
             return 'Our team will contact you to complete your booking.'
         
         try:
-            customer_data = {
-                'firstName': state.get('firstName'),
-                'phone': state.get('phone'),
-                'postcode': state.get('postcode'),
-                'service': state.get('service'),
-                'type': state.get('type'),
-                'price': state.get('price'),
-                'booking_ref': state.get('booking_ref')
-            }
+            customer_data = state['collected_data']
+            customer_data['price'] = state['price']
+            customer_data['booking_ref'] = state['booking_ref']
+            
             result = complete_booking(customer_data)
             
             if result.get('success'):
@@ -472,8 +462,8 @@ class BaseAgent:
                 state['booking_completed'] = True
                 self.conversations[conversation_id] = state
                 
-                if payment_link and state.get('phone'):
-                    send_sms(state['firstName'], state['phone'], booking_ref, price, payment_link)
+                if payment_link and customer_data.get('phone'):
+                    send_sms(customer_data['firstName'], customer_data['phone'], booking_ref, price, payment_link)
                 
                 response = f"Booking confirmed! Ref: {booking_ref}, Price: {price}."
                 if payment_link:
@@ -487,6 +477,15 @@ class BaseAgent:
             send_webhook(conversation_id, state, 'api_error')
             return "Booking issue occurred. Our team will contact you."
 
+    def check_for_missing_info(self, state, service_type):
+        missing_fields = [f for f in REQUIRED_FIELDS.get(service_type, []) if not state.get('collected_data', {}).get(f)]
+        if not missing_fields: return None
+        
+        first_missing = missing_fields[0]
+        if first_missing == 'firstName': return f"{CONVERSATION_STANDARDS['greeting_response']}. What's your name?"
+        if first_missing == 'postcode': return "What's your complete postcode? For example, LS14ED rather than just LS1."
+        if first_missing == 'phone': return "What's the best phone number to contact you on?"
+        return None
 
 # --- AGENT SUBCLASSES ---
 class SkipAgent(BaseAgent):
@@ -498,31 +497,33 @@ class SkipAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['skip'])
-        
-        if wants_to_book and state.get('price'):
-            return self.complete_booking(state, conversation_id)
 
+        # Fix: Check for price BEFORE asking for more info
         if has_all_required_data and not state.get('price'):
             if state.get('collected_data', {}).get('type') in ['10yd', '12yd'] and any(material in message.lower() for material in ['soil', 'rubble', 'concrete', 'bricks', 'heavy']):
                  return SKIP_HIRE_RULES['A2_heavy_materials']['heavy_materials_max']
             return self.get_pricing(state, conversation_id, wants_to_book)
         
+        if wants_to_book and state.get('price'):
+            return self.complete_booking(state, conversation_id)
+        
+        # Now handle specific rules and questions
         if 'plasterboard' in message.lower(): return SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
         if any(item in message.lower() for item in ['fridge', 'mattress', 'freezer']): return SKIP_HIRE_RULES['A5_prohibited_items']['restrictions_response']
         if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture']): return SKIP_HIRE_RULES['A5_prohibited_items']['upholstery_alternative']
         if any(phrase in message.lower() for phrase in ['what cannot put', 'what can\'t put', 'prohibited', 'not allowed']):
             prohibited_items = ', '.join(SKIP_HIRE_RULES['A5_prohibited_items']['prohibited_list'])
             return f"The following items may not be permitted in skips, or may carry a surcharge: {prohibited_items}"
-
         if 'permit' in message.lower() and any(term in message.lower() for term in ['cost', 'price', 'charge']):
              return "We'll arrange the permit for you and include the cost in your quote. The price varies by council."
 
-        if not state.get('collected_data', {}).get('firstName'): return f"{CONVERSATION_STANDARDS['greeting_response']}. What's your name?"
-        if not state.get('collected_data', {}).get('postcode'): return "What's your complete postcode? For example, LS14ED rather than just LS1."
-        if not state.get('collected_data', {}).get('phone'): return "What's the best phone number to contact you on?"
-        
+        # Finally, check for missing info
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
+            
+        # Fallback if all is collected but for some reason we missed pricing
         return self.get_pricing(state, conversation_id, wants_to_book)
-
 
 class MAVAgent(BaseAgent):
     def __init__(self):
@@ -534,7 +535,7 @@ class MAVAgent(BaseAgent):
     def get_next_response(self, message, state, conversation_id):
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['mav'])
-        
+
         if wants_to_book and state.get('price'):
             return self.complete_booking(state, conversation_id)
 
@@ -555,12 +556,11 @@ class MAVAgent(BaseAgent):
         if any(time_phrase in message.lower() for time_phrase in ['what time', 'specific time', 'exact time', 'morning', 'afternoon']):
             return MAV_RULES['B5_additional_timing']['time_script']
 
-        if not state.get('collected_data', {}).get('firstName'): return f"{CONVERSATION_STANDARDS['greeting_response']}. What's your name?"
-        if not state.get('collected_data', {}).get('postcode'): return "What's your complete postcode? For example, LS14ED rather than just LS1."
-        if not state.get('collected_data', {}).get('phone'): return "What's the best phone number to contact you on?"
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
         
-        return f"{CONVERSATION_STANDARDS['greeting_response']}. I can help you with man & van service. {MAV_RULES['B1_information_gathering']['cubic_yard_explanation']} What's your name?"
-
+        return self.get_pricing(state, conversation_id, wants_to_book)
 
 class GrabAgent(BaseAgent):
     def __init__(self):
@@ -600,9 +600,9 @@ class GrabAgent(BaseAgent):
                 return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
             state['collected_data']['materials_checked'] = True
 
-        if not state.get('collected_data', {}).get('firstName'): return "Can I take your name please?"
-        if not state.get('collected_data', {}).get('phone'): return "What's the best phone number to contact you on?"
-        if not state.get('collected_data', {}).get('postcode'): return "What's the postcode where you need the grab lorry?"
+        missing_info_response = self.check_for_missing_info(state, self.service_type)
+        if missing_info_response:
+            return missing_info_response
         
         return f"{CONVERSATION_STANDARDS['greeting_response']}. I can help you with grab hire. Can I take your name please?"
 
@@ -645,7 +645,8 @@ def route_to_agent(message, conversation_id):
 
 @app.route('/')
 def index():
-    return """<!DOCTYPE html>
+    return render_template_string("""
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -696,6 +697,7 @@ def index():
     </div>
 </body>
 </html>"""
+)
 
 @app.route('/api/wasteking', methods=['POST'])
 def process_message_endpoint():
@@ -710,7 +712,6 @@ def process_message_endpoint():
         
         response = route_to_agent(customer_message, conversation_id)
         
-        # This part of the dashboard logic needs to be updated. It should be handled by the agent process_message
         state = shared_conversations.get(conversation_id, {})
         dashboard_manager.update_call(conversation_id, state)
         
@@ -874,8 +875,7 @@ def user_dashboard():
     </script>
 </body>
 </html>
-"""
-)
+""")
 
 @app.route('/dashboard/manager')
 def manager_dashboard():
@@ -1061,6 +1061,173 @@ def test_interface():
 <!DOCTYPE html>
 <html>
 <head>
+    <title>WasteKing System Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .response { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 15px 0; white-space: pre-wrap; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WasteKing System Test</h1>
+        
+        <h3>Test Messages</h3>
+        <textarea id="test-message" placeholder="Enter test message...">Hi, I'm Abdul and I need an 8 yard skip for LS1 4ED</textarea>
+        <br>
+        <button onclick="testMessage()">Test Message</button>
+        <button onclick="testPricing()">Test Pricing Flow</button>
+        <button onclick="testComplaint()">Test Complaint</button>
+        <button onclick="testDirector()">Test Director Request</button>
+        
+        <div id="response" class="response" style="display: none;"></div>
+        
+        <h3>Pre-built Test Scenarios</h3>
+        <button onclick="runFullTest()">Run Full Skip Booking Test</button>
+        <div id="full-test-results"></div>
+    </div>
+
+    <script>
+        let currentConversationId = null;
+        
+        function testMessage() {
+            const message = document.getElementById('test-message').value;
+            sendMessage(message);
+        }
+        
+        function testPricing() {
+            currentConversationId = null;
+            sendMessage("Hi, I need a skip for LS1 4ED, my name is John");
+        }
+        
+        function testComplaint() {
+            sendMessage("I want to make a complaint about your service");
+        }
+        
+        function testDirector() {
+            sendMessage("I need to speak to Glenn Currie");
+        }
+        
+        function sendMessage(message) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.style.display = 'block';
+            responseDiv.textContent = 'Processing...';
+            responseDiv.className = 'response';
+            
+            fetch('/api/wasteking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    customerquestion: message,
+                    conversation_id: currentConversationId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentConversationId = data.conversation_id;
+                    responseDiv.className = 'response success';
+                    responseDiv.textContent = `Response: ${data.message}\n\nStage: ${data.stage || 'N/A'}\nPrice: ${data.price || 'N/A'}\nConversation ID: ${data.conversation_id}`;
+                } else {
+                    responseDiv.className = 'response error';
+                    responseDiv.textContent = `Error: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = `Network Error: ${error.message}`;
+            });
+        }
+        
+        async function runFullTest() {
+            const resultsDiv = document.getElementById('full-test-results');
+            resultsDiv.innerHTML = '<h4>Running Full Skip Booking Test...</h4>';
+            
+            const messages = [
+                "Hi, I need a skip",
+                "Abdul",
+                "LS1 4ED",
+                "07823656762",
+                "No prohibited items",
+                "Yes, I want to book it"
+            ];
+            
+            currentConversationId = null;
+            let results = [];
+            
+            for (let i = 0; i < messages.length; i++) {
+                try {
+                    const response = await fetch('/api/wasteking', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            customerquestion: messages[i],
+                            conversation_id: currentConversationId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    currentConversationId = data.conversation_id;
+                    
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        response: data.message,
+                        stage: data.stage,
+                        price: data.price,
+                        success: data.success
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                } catch (error) {
+                    results.push({
+                        step: i + 1,
+                        message: messages[i],
+                        error: error.message
+                    });
+                }
+            }
+            
+            resultsDiv.innerHTML = '<h4>Test Results:</h4>' + results.map((result, i) => `
+                <div style="margin: 10px 0; padding: 10px; background: ${result.error ? '#f8d7da' : '#d4edda'}; border-radius: 5px;">
+                    <strong>Step ${result.step}: ${result.message}</strong><br>
+                    ${result.error ? `Error: ${result.error}` : `Response: ${result.response}<br>Stage: ${result.stage || 'N/A'}<br>Price: ${result.price || 'N/A'}`}
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+""")
+
+
+@app.route('/api/dashboard/user')
+def user_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_user_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"active_calls": 0, "live_calls": [], "total_calls": 0}})
+
+@app.route('/api/dashboard/manager')
+def manager_dashboard_api():
+    try:
+        dashboard_data = dashboard_manager.get_manager_dashboard_data()
+        return jsonify({"success": True, "data": dashboard_data})
+    except Exception as e:
+        return jsonify({"success": False, "data": {"total_calls": 0, "completed_calls": 0, "conversion_rate": 0, "service_breakdown": {}, "individual_calls": [], "recent_calls": [], "active_calls": []}})
+
+@app.route('/api/test-interface')
+def test_interface():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
     <title>Test WasteKing System</title>
 </head>
 <body>
@@ -1068,7 +1235,6 @@ def test_interface():
 </body>
 </html>
 """)
-
 
 @app.route('/api/health')
 def health():
