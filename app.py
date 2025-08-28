@@ -189,14 +189,10 @@ def is_business_hours():
 def send_webhook(conversation_id, data, reason):
     try:
         customer_data = state['collected_data']
-        customer_data['price'] = state['price']
-        customer_data['booking_ref'] = state['booking_ref']
             
         
         payload = {
-            "customer_data": customer_data,
-            "customer_data['price'] : customer_data['price']",
-            "customer_data['booking_ref']": customer_data['booking_ref'],
+            "customer_data": customer_data
         }
         
         webhook_url = os.getenv('WEBHOOK_URL', "https://hook.eu2.make.com/t7bneptowre8yhexo5fjjx4nc09gqdz1")
