@@ -1222,7 +1222,7 @@ def user_dashboard_page():
                         }
                     }
                 }
-            }, 1000);
+            }, 400);
         });
     </script>
 </body>
