@@ -430,7 +430,7 @@ class OpenAIQuestionValidator:
             
     def generate_smart_response(self, state, service_type, conversation_history):
         try:
-            prompt = f"You are a {service_type} booking agent. Customer data: {state}. Generate a natural, polite response. Avoid overusing words like 'great', 'brilliant', 'lovely'. Use natural conversation like 'That's good', 'I'd be happy to help', etc. Be concise (1-2 sentences)."
+            prompt = f"You are a {service_type} booking agent. Customer data: {state}. Make sure if the product is not skip, under no circumstances, pass on the price or payment link Generate a natural, polite response. Avoid overusing words like 'great', 'brilliant', 'lovely'. Use natural conversation like 'That's good', 'I'd be happy to help', etc. Be concise (1-2 sentences)."
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=100, temperature=0.3
             )
@@ -1469,7 +1469,7 @@ def route_to_agent(message, conversation_id):
 def index():
     return redirect(url_for('user_dashboard_page'))
 
-@app.route('/api/wasteking', methods=['POST'])
+@app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message_endpoint():
     try:
         data = request.get_json()
