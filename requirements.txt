@@ -6,3 +6,4 @@ twilio
 elevenlabs
 openai
 flask-cors
+redis
