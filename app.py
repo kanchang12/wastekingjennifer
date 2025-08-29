@@ -219,7 +219,7 @@ def send_sms(phone, message):
         return False
 
 # Email sender
-def send_email(subject, body, recipient='kanchan.g12@gmail.com'):
+def send_email(subject, body, recipient='kanchan.ghosh@wasteking.co.uk'):
     try:
         email_address = os.getenv('WASTEKING_EMAIL')
         email_password = os.getenv('WASTEKING_EMAIL_PASSWORD')
@@ -245,6 +245,10 @@ def send_email(subject, body, recipient='kanchan.g12@gmail.com'):
     except Exception as e:
         print(f"EMAIL ERROR: {e}")
         return False
+
+# Initialize Flask app BEFORE class definition
+app = Flask(__name__)
+CORS(app)
 
 class WasteKingAgent:
     def __init__(self):
@@ -1036,3 +1040,204 @@ Access Issues: {customer_data.get('access_issues', 'Not specified')}
 Action: Arrange collection (1-4 days typically)
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
+        
+        print("SENDING SKIP COLLECTION REQUEST")
+        send_email(subject, body)
+
+# Initialize agent globally
+agent = WasteKingAgent()
+conversation_counter = 0
+
+def get_conversation_id():
+    global conversation_counter
+    conversation_counter += 1
+    return f"conv{conversation_counter:06d}"
+
+@app.route('/api/wasteking', methods=['POST'])
+def process_message():
+    try:
+        data = request.get_json()
+        customer_message = data.get('customerquestion', '').strip()
+        conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id') or get_conversation_id()
+        
+        if not customer_message:
+            return jsonify({"success": False, "message": "No message provided"}), 400
+        
+        response_text, stage = agent.process_message(customer_message, conversation_id)
+        
+        return jsonify({
+            "success": True,
+            "message": response_text,
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat(),
+            "stage": stage
+        })
+        
+    except Exception as e:
+        print(f"ERROR: {e}")
+        traceback.print_exc()
+        return jsonify({
+            "success": False, 
+            "message": "I'll connect you with our team who can help immediately.",
+            "error": str(e)
+        }), 500
+
+@app.route('/')
+def index():
+    return redirect('/dashboard')
+
+@app.route('/dashboard')
+def dashboard():
+    html_template = """<!DOCTYPE html>
+<html>
+<head>
+    <title>WasteKing Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-box { background: white; border: 1px solid #ddd; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .conversations { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .conv-item { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
+        .conv-item.completed { border-left-color: #28a745; }
+        .conv-item.lead-sent { border-left-color: #ffc107; }
+        .customer-details { margin-top: 8px; font-size: 14px; }
+        .service-badge { background: #007bff; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: 10px; }
+        .refresh-btn { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>WasteKing System Dashboard</h1>
+        <p>Live conversation monitoring with full customer details</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-box">
+            <h3 id="total-conversations">0</h3>
+            <p>Total Conversations</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="active-conversations">0</h3>
+            <p>Active Now</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="bookings-completed">0</h3>
+            <p>Bookings Completed</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="leads-sent">0</h3>
+            <p>Leads Generated</p>
+        </div>
+    </div>
+    
+    <div class="conversations">
+        <h2>Live Conversations 
+            <button class="refresh-btn" onclick="loadDashboard()">Refresh Now</button>
+        </h2>
+        <div id="conversation-list">Loading...</div>
+    </div>
+
+    <script>
+        function loadDashboard() {
+            fetch('/api/dashboard')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('total-conversations').textContent = data.total || 0;
+                        document.getElementById('active-conversations').textContent = data.active || 0;
+                        document.getElementById('bookings-completed').textContent = data.completed || 0;
+                        document.getElementById('leads-sent').textContent = data.leads || 0;
+                        
+                        const convHTML = (data.conversations || []).map(conv => {
+                            const statusClass = conv.stage === 'completed' ? 'completed' : (conv.stage === 'lead_sent' ? 'lead-sent' : '');
+                            return `
+                                <div class="conv-item ${statusClass}">
+                                    <strong>${conv.id}</strong> - Stage: ${conv.stage}
+                                    ${conv.service ? `<span class="service-badge">${conv.service.toUpperCase()}</span>` : ''}
+                                    <br><small>Time: ${conv.timestamp}</small>
+                                    <div class="customer-details">
+                                        ${conv.name ? `<strong>Name:</strong> ${conv.name}<br>` : ''}
+                                        ${conv.phone ? `<strong>Phone:</strong> ${conv.phone}<br>` : ''}
+                                        ${conv.postcode ? `<strong>Postcode:</strong> ${conv.postcode}<br>` : ''}
+                                        ${conv.customer_type ? `<strong>Type:</strong> ${conv.customer_type}<br>` : ''}
+                                        ${conv.details ? `<strong>Details:</strong> ${conv.details}` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('');
+                        
+                        document.getElementById('conversation-list').innerHTML = convHTML || '<p>No conversations yet</p>';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('conversation-list').innerHTML = '<div style="color: red;">Error loading dashboard data</div>';
+                });
+        }
+        
+        loadDashboard();
+        setInterval(loadDashboard, 3000);
+    </script>
+</body>
+</html>"""
+    return render_template_string(html_template)
+
+@app.route('/api/dashboard')
+def dashboard_api():
+    try:
+        conversations = agent.conversations
+        
+        total = len(conversations)
+        active = sum(1 for conv in conversations.values() if conv.get('stage') not in ['completed', 'lead_sent'])
+        completed = sum(1 for conv in conversations.values() if conv.get('stage') == 'completed')
+        leads = sum(1 for conv in conversations.values() if conv.get('stage') == 'lead_sent')
+        
+        recent_convs = []
+        for conv_id, conv_data in list(conversations.items())[-15:]:  # Show last 15 conversations
+            customer_data = conv_data.get('customer_data', {})
+            
+            # Build details string
+            details_parts = []
+            if customer_data.get('volume'):
+                details_parts.append(f"Volume: {customer_data['volume']}")
+            if customer_data.get('when_required'):
+                details_parts.append(f"When: {customer_data['when_required']}")
+            if customer_data.get('skip_size'):
+                details_parts.append(f"Size: {customer_data['skip_size']}")
+            if customer_data.get('material_type'):
+                details_parts.append(f"Material: {customer_data['material_type']}")
+            
+            recent_convs.append({
+                'id': conv_id[-8:],  # Show last 8 chars for readability
+                'stage': conv_data.get('stage', 'unknown'),
+                'service': conv_data.get('service_type', ''),
+                'name': customer_data.get('name', ''),
+                'phone': customer_data.get('phone', ''),
+                'postcode': customer_data.get('postcode', ''),
+                'customer_type': conv_data.get('customer_type', ''),
+                'details': ' | '.join(details_parts) if details_parts else '',
+                'timestamp': datetime.now().strftime('%H:%M:%S')
+            })
+        
+        return jsonify({
+            "success": True,
+            "total": total,
+            "active": active,
+            "completed": completed,
+            "leads": leads,
+            "conversations": recent_convs
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+if __name__ == '__main__':
+    print("WasteKing Agent Starting...")
+    print("Skip hire: Auto-booking with SMS confirmations")
+    print("All services: Complete lead generation before transfer")
+    print("Clean console logging enabled")
+    
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
+
+# Ensure app is accessible for Gunicorn
+application = app
