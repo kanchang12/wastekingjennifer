@@ -961,12 +961,12 @@ def index():
 
 @app.route('/dashboard')
 def dashboard():
-    return render_template_string("""<!DOCTYPE html>
+    html_template = """<!DOCTYPE html>
 <html>
 <head>
     <title>WasteKing Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; margin:20px; background: #f5f5f5; }
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
         .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
         .stats { display: flex; gap: 20px; margin-bottom: 20px; }
         .stat-box { background: white; border: 1px solid #ddd; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -1052,7 +1052,8 @@ def dashboard():
         setInterval(loadDashboard, 3000);
     </script>
 </body>
-</html>""")
+</html>"""
+    return render_template_string(html_template)
 
 @app.route('/api/dashboard')
 def dashboard_api():
