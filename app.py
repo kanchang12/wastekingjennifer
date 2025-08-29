@@ -1189,49 +1189,36 @@ class BaseAgent:
             send_webhook(conversation_id, state, 'api_error')
             return "Booking issue occurred. Our team will contact you."
 
-    def check_for_missing_info(self, state, service_type):
+      def check_for_missing_info(self, state, service_type):
         collected_data = state.get('collected_data', {})
-        missing_fields = []
+        required = REQUIRED_FIELDS.get(service_type, [])
         
-        # Check what's actually missing
-        for field in REQUIRED_FIELDS.get(service_type, []):
+        for field in required:
             if not collected_data.get(field):
-                missing_fields.append(field)
-        
-        if not missing_fields: 
-            return None
-        
-        # Ask for the FIRST missing field only
-        first_missing = missing_fields[0]
-        
-        if first_missing == 'customer_type': 
-            return "Are you a domestic customer or trade customer?"
-        if first_missing == 'firstName': 
-            return "I'd be happy to help. What's your name?"
-        if first_missing == 'postcode': 
-            return "What's your complete postcode? For example, LS14ED rather than just LS1."
-        if first_missing == 'phone': 
-            return "What's the best phone number to contact you on?"
-        if first_missing == 'address_line1': 
-            return "What's the first line of your address?"
-        if first_missing == 'level_load': 
-            return "Is the skip a level load?"
-        if first_missing == 'prohibited_check': 
-            return "Can you confirm there are no prohibited items in the skip?"
-        if first_missing == 'access_issues': 
-            return "Are there any access issues for collection?"
-        
-        # MAV specific fields
-        if first_missing == 'volume': 
-            return "How many cubic yards do you estimate you have? Remember, two washing machines equal about one cubic yard."
-        if first_missing == 'when_required': 
-            return "When do you need this collection? Today, tomorrow, or a specific date?"
-        
-        # Grab specific fields  
-        if first_missing == 'material_type': 
-            return "What type of material needs removing? Is it soil and rubble (muckaway) or mixed materials?"
-        if first_missing == 'access_details': 
-            return "Are there any access issues? Any narrow roads, height restrictions, or parking limitations?"
+                # Check if we've already asked this question
+                asked_key = f'asked_{field}'
+                if state.get(asked_key):
+                    continue  # Skip if already asked
+                
+                # Mark that we're asking this question
+                state[asked_key] = True
+                
+                if field == 'customer_type':
+                    return "Are you a domestic customer or trade customer?"
+                elif field == 'firstName':
+                    return "What's your name?"
+                elif field == 'postcode':
+                    return "What's your postcode?"
+                elif field == 'phone':
+                    return "What's the best phone number to contact you on?"
+                elif field == 'volume':
+                    return "How many cubic yards do you estimate? Two washing machines equal about one cubic yard."
+                elif field == 'when_required':
+                    return "When do you need this collection?"
+                elif field == 'material_type':
+                    return "What type of material needs removing?"
+                elif field == 'access_details':
+                    return "Are there any access issues?"
         
         return None
 
