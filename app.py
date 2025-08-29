@@ -1085,6 +1085,161 @@ def index():
 
 @app.route('/dashboard')
 def dashboard_page():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WasteKing - Admin Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .header { background: #667eea; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-box { background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .calls { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .call-item { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #667eea; }
+        .status-active { border-left-color: #28a745; }
+        .status-completed { border-left-color: #6c757d; }
+        .nav-links { margin-bottom: 20px; }
+        .nav-links a { background: #667eea; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>WasteKing Admin Dashboard</h1>
+        <p>Real-time system monitoring and call management</p>
+    </div>
+    
+    <div class="nav-links">
+        <a href="/dashboard">Admin Dashboard</a>
+        <a href="/dashboard/user">User Dashboard</a>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-box">
+            <h3 id="active-calls">0</h3>
+            <p>Active Calls</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="total-calls">0</h3>
+            <p>Total Calls</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="response-time">< 1s</h3>
+            <p>Avg Response Time</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="system-status">ONLINE</h3>
+            <p>System Status</p>
+        </div>
+    </div>
+    
+    <div class="calls">
+        <h2>Live Call Monitor</h2>
+        <div id="calls-list">Loading...</div>
+    </div>
+
+    <script>
+        function loadDashboard() {
+            fetch('/api/dashboard')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('active-calls').textContent = data.data.active_calls;
+                        document.getElementById('total-calls').textContent = data.data.total_calls;
+                        
+                        const callsHTML = data.data.live_calls.map(call => {
+                            const statusClass = call.status === 'active' ? 'status-active' : 'status-completed';
+                            return `
+                                <div class="call-item ${statusClass}">
+                                    <strong>${call.id}</strong> - Stage: ${call.stage}
+                                    <br><small>Time: ${new Date(call.timestamp).toLocaleString()}</small>
+                                    <br><small>Status: ${call.status}</small>
+                                    ${call.data && call.data.name ? `<br><small>Customer: ${call.data.name}</small>` : ''}
+                                    ${call.data && call.data.postcode ? `<br><small>Postcode: ${call.data.postcode}</small>` : ''}
+                                </div>
+                            `;
+                        }).join('');
+                        
+                        document.getElementById('calls-list').innerHTML = callsHTML || 'No calls yet';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('calls-list').innerHTML = '<div style="color: red;">Error loading dashboard data</div>';
+                });
+        }
+        
+        loadDashboard();
+        setInterval(loadDashboard, 3000); // Refresh every 3 seconds
+    </script>
+</body>
+</html>
+""")
+
+@app.route('/dashboard/user')
+def user_dashboard_page():
+    return render_template_string("""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WasteKing - Fast Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background: #667eea; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-box { background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center; }
+        .calls { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; }
+        .call-item { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>WasteKing Fast System</h1>
+        <p>Optimized for sub-1-second response times</p>
+    </div>
+    
+    <div class="stats">
+        <div class="stat-box">
+            <h3 id="active-calls">0</h3>
+            <p>Active Calls</p>
+        </div>
+        <div class="stat-box">
+            <h3 id="total-calls">0</h3>
+            <p>Total Calls</p>
+        </div>
+    </div>
+    
+    <div class="calls">
+        <h2>Recent Calls</h2>
+        <div id="calls-list">Loading...</div>
+    </div>
+
+    <script>
+        function loadDashboard() {
+            fetch('/api/dashboard')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('active-calls').textContent = data.data.active_calls;
+                        document.getElementById('total-calls').textContent = data.data.total_calls;
+                        
+                        const callsHTML = data.data.live_calls.map(call => `
+                            <div class="call-item">
+                                <strong>${call.id}</strong> - ${call.stage}
+                                <br><small>${new Date(call.timestamp).toLocaleString()}</small>
+                            </div>
+                        `).join('');
+                        
+                        document.getElementById('calls-list').innerHTML = callsHTML || 'No calls yet';
+                    }
+                });
+        }
+        
+        loadDashboard();
+        setInterval(loadDashboard, 5000);
+    </script>
+</body>
+</html>
+""")
 
 @app.route('/dashboard/user')
 def user_dashboard_page():
@@ -1239,72 +1394,6 @@ def dashboard_page():
         
         loadDashboard();
         setInterval(loadDashboard, 3000); // Refresh every 3 seconds
-    </script>
-</body>
-</html>
-""")
-
-@app.route('/dashboard/user')
-def user_dashboard_page():
-    return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>WasteKing - Fast Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .header { background: #667eea; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
-        .stat-box { background: #f8f9fa; padding: 15px; border-radius: 8px; text-align: center; }
-        .calls { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; }
-        .call-item { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>WasteKing Fast System</h1>
-        <p>Optimized for sub-1-second response times</p>
-    </div>
-    
-    <div class="stats">
-        <div class="stat-box">
-            <h3 id="active-calls">0</h3>
-            <p>Active Calls</p>
-        </div>
-        <div class="stat-box">
-            <h3 id="total-calls">0</h3>
-            <p>Total Calls</p>
-        </div>
-    </div>
-    
-    <div class="calls">
-        <h2>Recent Calls</h2>
-        <div id="calls-list">Loading...</div>
-    </div>
-
-    <script>
-        function loadDashboard() {
-            fetch('/api/dashboard')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        document.getElementById('active-calls').textContent = data.data.active_calls;
-                        document.getElementById('total-calls').textContent = data.data.total_calls;
-                        
-                        const callsHTML = data.data.live_calls.map(call => `
-                            <div class="call-item">
-                                <strong>${call.id}</strong> - ${call.stage}
-                                <br><small>${new Date(call.timestamp).toLocaleString()}</small>
-                            </div>
-                        `).join('');
-                        
-                        document.getElementById('calls-list').innerHTML = callsHTML || 'No calls yet';
-                    }
-                });
-        }
-        
-        loadDashboard();
-        setInterval(loadDashboard, 5000);
     </script>
 </body>
 </html>
