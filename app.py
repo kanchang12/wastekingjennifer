@@ -74,7 +74,7 @@ def process_message():
                 response = "What's your name?"
             elif not state['customer_data'].get('phone'):
                 response = "What's your phone number?"
-            elif not state['customer_data'].get('postcode@app.route('/api/wasteking', methods=['POST'])
+            elif not state['customer_data'].get('postcode'):
 def process_message():
     try:
         data = request.get_json()
