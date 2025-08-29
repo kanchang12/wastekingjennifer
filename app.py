@@ -1243,10 +1243,13 @@ class SkipAgent(BaseAgent):
         self.default_type = '8yd'
 
     def get_next_response(self, message, state, conversation_id):
+        # FORCE service type to be skip
+        state['collected_data']['service'] = 'skip'
+        
         wants_to_book = self.should_book(message)
         has_all_required_data = all(state.get('collected_data', {}).get(f) for f in REQUIRED_FIELDS['skip'])
 
-        # Handle prohibited items first - NEVER transfer skip calls
+        # Handle prohibited items first
         if any(item in message.lower() for item in ['sofa', 'chair', 'upholstery', 'furniture', 'mattress', 'fridge', 'freezer']):
             return "We can't take sofas, chairs, upholstered furniture, mattresses (£15 charge), or fridges (£20 charge) in skips. Our man and van service can collect these items for you. Would you like to continue with skip hire for other waste?"
         
@@ -1270,14 +1273,17 @@ class SkipAgent(BaseAgent):
             if not state.get('collected_data', {}).get('type'):
                 state['collected_data']['type'] = self.default_type
             
+            # ONLY SKIP AGENT CALLS PRICING
             return self.get_pricing(state, conversation_id, wants_to_book)
         
         if wants_to_book and state.get('price'):
+            # ONLY SKIP AGENT COMPLETES BOOKING
             return self.complete_booking(state, conversation_id)
         
         if 'permit' in message.lower() and any(term in message.lower() for term in ['cost', 'price', 'charge']):
             return "We'll arrange the permit for you and include the cost in your quote. The price varies by council."
             
+        # ONLY SKIP AGENT GETS PRICING  
         return self.get_pricing(state, conversation_id, wants_to_book)
 
 class MAVAgent(BaseAgent):
@@ -1288,9 +1294,14 @@ class MAVAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         collected_data = state.get('collected_data', {})
+        
+        # FORCE service type to be MAV - prevents any confusion
+        collected_data['service'] = 'mav'
+        state['collected_data'] = collected_data
+        
         has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['mav'])
 
-        # Check for heavy materials first - immediate transfer
+        # Check for heavy materials first - immediate explanation
         if any(heavy in message.lower() for heavy in ['soil', 'rubble', 'bricks', 'concrete', 'tiles', 'heavy']):
             return MAV_RULES['B2_heavy_materials']['script']
 
@@ -1299,7 +1310,7 @@ class MAVAgent(BaseAgent):
         if missing_info_response:
             return missing_info_response
 
-        # If we have all required information, send email to Kanchan - NO PRICING
+        # CRITICAL: If we have all required information, send email to Kanchan - NEVER CALL PRICING
         if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
             state['stage'] = 'lead_sent'
@@ -1309,9 +1320,9 @@ class MAVAgent(BaseAgent):
             send_non_skip_inquiry_email(collected_data, 'mav', state.get('history', []))
             
             if is_business_hours():
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your man & van details. Our team will call you back within the next few hours with pricing and availability."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your details. Our team will call you back within the next few hours with pricing and availability. Is there anything else I can help with?"
             else:
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your man & van details. Our team will call you back first thing tomorrow with pricing and availability."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your details. Our team will call you back first thing tomorrow with pricing and availability. Is there anything else I can help with?"
 
         # Handle timing questions
         if 'sunday' in message.lower(): 
@@ -1319,9 +1330,8 @@ class MAVAgent(BaseAgent):
         if any(time_phrase in message.lower() for time_phrase in ['what time', 'specific time', 'exact time', 'morning', 'afternoon']):
             return MAV_RULES['B5_additional_timing']['time_script']
 
-        # Default response if no specific action is triggered
-        return "I need just a few more details to arrange your man & van collection."
-
+        # NEVER CALL get_pricing() or complete_booking() from MAV agent
+        return "I need just a few more details to arrange your collection."
 
 class GrabAgent(BaseAgent):
     def __init__(self):
@@ -1331,10 +1341,15 @@ class GrabAgent(BaseAgent):
 
     def get_next_response(self, message, state, conversation_id):
         collected_data = state.get('collected_data', {})
+        
+        # FORCE service type to be grab - prevents any confusion
+        collected_data['service'] = 'grab'
+        state['collected_data'] = collected_data
+            
         has_all_required_data = all(collected_data.get(f) for f in REQUIRED_FIELDS['grab'])
         customer_type = collected_data.get('customer_type')
         
-        # For TRADE customers, immediately collect basic info and send to LG
+        # For TRADE customers, collect basic info and send to team
         if customer_type == 'trade':
             basic_fields = ['firstName', 'postcode', 'phone']
             missing_basic = [f for f in basic_fields if not collected_data.get(f)]
@@ -1344,20 +1359,19 @@ class GrabAgent(BaseAgent):
                 elif field == 'postcode': return "What's your postcode?"
                 elif field == 'phone': return "What's the best phone number to contact you on?"
             else:
-                # Send to LG team for trade customers
                 send_non_skip_inquiry_email(collected_data, 'grab_trade', state.get('history', []))
                 state['stage'] = 'lead_sent'
                 if is_business_hours():
-                    return "Thank you, I have your details. Our specialist team will call you back within the next few hours to confirm cost and availability for your grab hire requirement."
+                    return "Thank you, I have your details. Our specialist team will call you back within the next few hours to confirm cost and availability for your grab hire requirement. Is there anything else I can help with?"
                 else:
-                    return "Thank you, I have your details. Our team will call you back first thing tomorrow to confirm cost and availability for your grab hire requirement."
+                    return "Thank you, I have your details. Our team will call you back first thing tomorrow to confirm cost and availability for your grab hire requirement. Is there anything else I can help with?"
 
         # Check for missing required information first
         missing_info_response = self.check_for_missing_info(state, self.service_type)
         if missing_info_response:
             return missing_info_response
 
-        # If we have all information, send email to Kanchan - NO PRICING
+        # CRITICAL: If we have all information, send email to Kanchan - NEVER CALL PRICING
         if has_all_required_data and not state.get('email_sent'):
             state['email_sent'] = True
             state['stage'] = 'lead_sent'
@@ -1367,9 +1381,9 @@ class GrabAgent(BaseAgent):
             send_non_skip_inquiry_email(collected_data, 'grab', state.get('history', []))
             
             if is_business_hours():
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability for your {collected_data.get('type', 'grab')} requirement."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back within the next few hours with pricing and availability. Is there anything else I can help with?"
             else:
-                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back first thing tomorrow with pricing and availability for your {collected_data.get('type', 'grab')} requirement."
+                return f"Thank you {collected_data.get('firstName', '')}, I have all your grab hire details. Our specialist team will call you back first thing tomorrow with pricing and availability. Is there anything else I can help with?"
 
         # Wheeler size explanations
         if not state.get('collected_data', {}).get('wheeler_explained'):
@@ -1389,7 +1403,7 @@ class GrabAgent(BaseAgent):
                 return GRAB_RULES['C3_materials_assessment']['mixed_materials']['script']
             state['collected_data']['materials_checked'] = True
 
-        # Default response if no specific action is triggered
+        # NEVER CALL get_pricing() or complete_booking() from Grab agent  
         return "I need just a few more details to arrange your grab hire."
 
 # --- FLASK APP AND ROUTING ---
@@ -1417,21 +1431,39 @@ def route_to_agent(message, conversation_id):
     context = shared_conversations.get(conversation_id, {})
     existing_service = context.get('collected_data', {}).get('service')
     
-    if any(word in message_lower for word in ['skip', 'skip hire', 'yard skip', 'cubic yard']):
+    # EXPLICIT routing with comprehensive keywords - ORDER MATTERS!
+    
+    # 1. SKIP HIRE - Only these get pricing/booking
+    if any(word in message_lower for word in ['skip hire', 'skip', 'container hire', 'yard skip', 'cubic yard']) and not any(word in message_lower for word in ['collection', 'collect', 'pick up', 'remove']):
         return skip_agent.process_message(message, conversation_id)
-    elif any(word in message_lower for word in ['man and van', 'mav', 'man & van', 'van collection', 'house clearance', 'clearance']):
+    
+    # 2. MAV SERVICES - All these get lead generation only (NO PRICING)
+    elif any(phrase in message_lower for phrase in [
+        'man and van', 'mav', 'man & van', 'van collection', 
+        'house clearance', 'clearance', 'garage clearance', 'loft clearance', 'office clearance',
+        'furniture removal', 'appliance removal', 'rubbish collection', 'waste removal',
+        'clear out', 'clearing', 'removal service'
+    ]):
         return mav_agent.process_message(message, conversation_id)
-    elif any(word in message_lower for word in ['grab', 'grab hire', 'wheeler', 'grab lorry']):
+    
+    # 3. GRAB SERVICES - All these get lead generation only (NO PRICING)
+    elif any(phrase in message_lower for phrase in [
+        'grab hire', 'grab lorry', 'grab', '8 wheeler', '6 wheeler', 
+        'soil removal', 'rubble removal', 'muck away', 'muckaway'
+    ]):
         return grab_agent.process_message(message, conversation_id)
+    
+    # 4. Continue existing conversation
     elif existing_service == 'skip':
         return skip_agent.process_message(message, conversation_id)
     elif existing_service == 'mav':
         return mav_agent.process_message(message, conversation_id)
     elif existing_service == 'grab':
         return grab_agent.process_message(message, conversation_id)
+    
+    # 5. DEFAULT: For unclear messages, route to MAV (leads) instead of skip (pricing)
     else:
-        # Default to skip if unclear
-        return skip_agent.process_message(message, conversation_id)
+        return mav_agent.process_message(message, conversation_id)
 
 @app.route('/')
 def index():
