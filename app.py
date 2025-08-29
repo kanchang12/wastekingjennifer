@@ -193,34 +193,30 @@ SKIP_SIZES = ['2yd', '4yd', '6yd', '8yd', '10yd', '12yd', '14yd', '16yd', '20yd'
 
 # --- EMAIL FUNCTIONS ---
 def send_email(subject, body, recipient=None):
+    zoho_email = os.getenv('ZOHO_EMAIL')
+    zoho_password = os.getenv('ZOHO_PASSWORD')
+    if not zoho_email or not zoho_password:
+        raise RuntimeError("Zoho email credentials not set. Please configure ZOHO_EMAIL and ZOHO_PASSWORD.")
+
+    recipient = recipient or 'kanchan.ghosh@gmail.com'
+    msg = MIMEMultipart()
+    msg['From'] = zoho_email
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
     try:
-        zoho_email = os.getenv('ZOHO_EMAIL')
-        zoho_password = os.getenv('ZOHO_PASSWORD')
-        
-        if not zoho_email or not zoho_password:
-            print("Zoho email credentials not configured")
-            return False
-            
-        recipient = recipient or 'kanchan.ghosh@wasteking.co.uk'
-        
-        msg = MIMEMultipart()
-        msg['From'] = zoho_email
-        msg['To'] = recipient
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-        
         server = smtplib.SMTP('smtp.zoho.com', 587)
         server.starttls()
         server.login(zoho_email, zoho_password)
         server.sendmail(zoho_email, recipient, msg.as_string())
         server.quit()
-        
-        print(f"Email sent successfully to {recipient}")
+        print(f"✅ Email sent to {recipient}")
         return True
-        
     except Exception as e:
-        print(f"Email sending failed: {e}")
+        print(f"❌ Email sending failed: {e}")
         return False
+
 
 def send_trade_customer_email(customer_data, conversation_history):
     subject = f"Trade Customer Inquiry - {customer_data.get('firstName', 'Unknown')}"
@@ -800,10 +796,11 @@ class BaseAgent:
         return None
 
     def ask_customer_type(self, message, state):
-        # Don't ask if they're clearly indicating service type already
-        if any(service_word in message.lower() for service_word in ['skip', 'man and van', 'grab', 'collection']):
+        if state.get('asked_customer_type'):
             return None
+        state['asked_customer_type'] = True
         return "Are you a domestic customer or trade customer?"
+
 
     def extract_customer_type(self, message):
         message_lower = message.lower()
@@ -1111,6 +1108,11 @@ class BaseAgent:
         return False
         
     def get_pricing(self, state, conversation_id, wants_to_book=False):
+        # inside get_pricing()
+        if state.get('collected_data', {}).get('service') != 'skip':
+            send_non_skip_inquiry_email(state['collected_data'], state.get('collected_data', {}).get('service', 'general'), state['history'])
+            return "Thanks, I’ve logged your details — our team will call you back with pricing."
+
         if not API_AVAILABLE:
             send_webhook(conversation_id, state, 'api_unavailable')
             return "I'm sorry, our pricing system is currently unavailable. Let me connect you with our team."
@@ -1156,6 +1158,10 @@ class BaseAgent:
             return "I'm sorry, I'm having a technical issue. Let me connect you with our team for immediate help."
 
     def complete_booking(self, state, conversation_id):
+        # inside complete_booking()
+        if state.get('collected_data', {}).get('service') != 'skip':
+            return "Only our skip hire bookings can be completed here. Our team will call you back to arrange this service."
+
         if not API_AVAILABLE:
             send_webhook(conversation_id, state, 'api_unavailable')
             return 'Our team will contact you to complete your booking.'
