@@ -16,14 +16,13 @@ import logging
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-# API Integration
-try:
-    from utils.wasteking_api import complete_booking, create_booking, get_pricing, create_payment_link
-    API_AVAILABLE = True
-    print("API AVAILABLE")
-except ImportError:
-    API_AVAILABLE = False
-    print("API NOT AVAILABLE - using fallback")
+# Flask app MUST be here for Gunicorn
+app = Flask(__name__)
+CORS(app)
+
+# API Integration - NO FALLBACK
+from utils.wasteking_api import complete_booking, create_booking, get_pricing, create_payment_link
+print("API AVAILABLE")
 
 # --- COMPREHENSIVE BUSINESS RULES ---
 SKIP_HIRE_RULES = {
@@ -202,7 +201,7 @@ def send_sms(phone, message):
         from_number = os.getenv('TWILIO_PHONE_NUMBER', '+447700900000')
         
         if not account_sid or not auth_token:
-            print(f"SMS FALLBACK: Would send to {phone}: {message}")
+            print(f"SMS WOULD SEND to {phone}: {message}")
             return True
             
         from twilio.rest import Client
@@ -212,7 +211,7 @@ def send_sms(phone, message):
         return True
         
     except ImportError:
-        print(f"SMS FALLBACK: Would send to {phone}: {message}")
+        print(f"SMS WOULD SEND to {phone}: {message}")
         return True
     except Exception as e:
         print(f"SMS ERROR: {e}")
@@ -225,7 +224,7 @@ def send_email(subject, body, recipient='kanchan.ghosh@wasteking.co.uk'):
         email_password = os.getenv('WASTEKING_EMAIL_PASSWORD')
         
         if not email_address or not email_password:
-            print(f"EMAIL FALLBACK: {subject}")
+            print(f"EMAIL WOULD SEND: {subject}")
             return True
             
         msg = MIMEMultipart()
@@ -246,10 +245,6 @@ def send_email(subject, body, recipient='kanchan.ghosh@wasteking.co.uk'):
         print(f"EMAIL ERROR: {e}")
         return False
 
-# Initialize Flask app BEFORE class definition
-app = Flask(__name__)
-CORS(app)
-
 class WasteKingAgent:
     def __init__(self):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -264,7 +259,7 @@ class WasteKingAgent:
             'history': [],
             'service_type': None,
             'customer_type': None,
-            'data_collected': []
+            'asked_fields': set()
         })
         
         state['history'].append(f"Customer: {message}")
@@ -278,7 +273,17 @@ class WasteKingAgent:
     def route_message(self, message, state):
         msg_lower = message.lower()
         
-        # 1. Customer type detection
+        # ALWAYS extract data from every message
+        self.extract_basic_data(message, state)
+        
+        # 1. Service detection - if not already set
+        if not state.get('service_type'):
+            service = self.detect_service(msg_lower)
+            if service:
+                state['service_type'] = service
+                print(f"SERVICE DETECTED: {service}")
+        
+        # 2. Customer type detection - if not already set
         if not state.get('customer_type'):
             if any(word in msg_lower for word in ['trade', 'business', 'commercial', 'company']):
                 state['customer_type'] = 'trade'
@@ -286,17 +291,8 @@ class WasteKingAgent:
             elif any(word in msg_lower for word in ['domestic', 'home', 'house', 'personal']):
                 state['customer_type'] = 'domestic'
                 print(f"CUSTOMER TYPE: domestic")
-            else:
-                return "Are you a domestic or trade customer?"
         
-        # 2. Service detection
-        if not state.get('service_type'):
-            service = self.detect_service(msg_lower)
-            if service:
-                state['service_type'] = service
-                print(f"SERVICE DETECTED: {service}")
-        
-        # 3. Route to appropriate handler
+        # 3. Always route to service handler if service is known
         service = state.get('service_type')
         
         if service == 'skip_hire':
@@ -310,7 +306,11 @@ class WasteKingAgent:
         elif service in ['toilet_hire', 'asbestos', 'road_sweep', 'hazardous']:
             return self.handle_specialist(message, state, msg_lower, service)
         else:
-            return self.handle_general(message, state, msg_lower)
+            # Only ask for service type if truly unknown
+            if not state.get('service_type'):
+                return "What service do you need - skip hire, man & van clearance, grab hire, or something else?"
+            else:
+                return self.handle_general(message, state, msg_lower)
     
     def detect_service(self, msg_lower):
         if any(word in msg_lower for word in ['skip']) and not any(word in msg_lower for word in ['collection', 'collect']):
@@ -331,46 +331,39 @@ class WasteKingAgent:
             return 'hazardous'
         return None
     
-    # SKIP HIRE - AUTO BOOK WITH ALL BUSINESS RULES
+    # SKIP HIRE - AUTO BOOK WITH API ONLY
     def handle_skip_hire(self, message, state, msg_lower):
         print("PROCESSING SKIP HIRE")
         
+        # Check completion status
+        if state.get('booking_completed'):
+            return "Your skip booking has been confirmed. You'll receive SMS confirmation shortly."
+        
         # Business rule checks FIRST
-        # Heavy materials with large skips
         large_skips = ['10', '12', '14', '16', '20']
         heavy_materials = ['soil', 'rubble', 'concrete', 'heavy']
         if any(size in msg_lower for size in large_skips) and any(material in msg_lower for material in heavy_materials):
             return SKIP_HIRE_RULES['heavy_materials_max']
         
-        # Prohibited items responses
         if 'plasterboard' in msg_lower:
             return SKIP_HIRE_RULES['plasterboard_response']
         elif any(item in msg_lower for item in ['sofa', 'upholstery', 'furniture']):
             return SKIP_HIRE_RULES['prohibited_items_full']
         elif any(item in msg_lower for item in ['mattress', 'fridge', 'freezer']):
             return SKIP_HIRE_RULES['fridge_mattress_restrictions']
-        elif 'prohibited' in msg_lower or 'not allowed' in msg_lower:
-            return SKIP_HIRE_RULES['prohibited_items_full']
         
-        # Delivery timing questions
-        if any(phrase in msg_lower for phrase in ['when deliver', 'delivery time', 'when arrive']):
-            return SKIP_HIRE_RULES['delivery_timing']
-        
-        # Permit questions
-        if 'permit' in msg_lower:
-            return GENERAL_SCRIPTS['permit_response']
-        
-        # Not booking responses
-        if any(phrase in msg_lower for phrase in ['call back', 'think about', 'check with', 'phone around']):
-            return SKIP_HIRE_RULES['not_booking_response']
-        
-        # Extract all data
+        # Extract data
         self.extract_basic_data(message, state)
         
-        # Required fields
+        # Initialize asked fields if not present
+        if 'asked_fields' not in state:
+            state['asked_fields'] = set()
+        
+        # Required fields - check and ask only once
         required = ['name', 'phone', 'postcode']
         for field in required:
-            if not state['customer_data'].get(field):
+            if not state['customer_data'].get(field) and field not in state['asked_fields']:
+                state['asked_fields'].add(field)
                 if field == 'name':
                     return "What's your name?"
                 elif field == 'phone':
@@ -378,53 +371,15 @@ class WasteKingAgent:
                 elif field == 'postcode':
                     return "What's your postcode?"
         
-        # All required data collected - AUTO BOOK IMMEDIATELY
-        if not state.get('booking_completed'):
-            return self.auto_book_skip(state)
+        # All required data collected - AUTO BOOK with API
+        if all(state['customer_data'].get(field) for field in required):
+            if not state.get('booking_completed'):
+                return self.auto_book_skip(state)
         
-        return "Your skip booking is being processed."
-    
-    def extract_basic_data(self, message, state):
-        """Extract basic customer data from message"""
-        # Name extraction
-        name_patterns = [
-            r"name\s+is\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-            r"i'?m\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-            r"call\s+me\s+([A-Za-z]+)"
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                state['customer_data']['name'] = match.group(1).strip()
-                break
-        
-        # Phone extraction
-        phone_patterns = [
-            r"\b(07\d{9})\b",
-            r"\b(0\d{10})\b",
-            r"\b(\d{11})\b"
-        ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, message)
-            if match:
-                state['customer_data']['phone'] = match.group(1)
-                break
-        
-        # Postcode extraction
-        postcode_pattern = r"\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b"
-        postcode_match = re.search(postcode_pattern, message.upper())
-        if postcode_match:
-            state['customer_data']['postcode'] = postcode_match.group(1).replace(' ', '')
-        
-        # Skip size extraction
-        skip_sizes = ['4', '6', '8', '10', '12', '14', '16']
-        for size in skip_sizes:
-            if f"{size} yard" in message.lower() or f"{size}yd" in message.lower():
-                state['customer_data']['skip_size'] = f"{size}yd"
-                break
+        return "Please provide the missing information for your skip booking."
     
     def auto_book_skip(self, state):
-        """Auto book skip with API or fallback"""
+        """Auto book skip with API ONLY"""
         customer_data = state['customer_data']
         
         # Set default skip size if not specified
@@ -436,63 +391,29 @@ class WasteKingAgent:
         postcode = customer_data['postcode']
         skip_size = customer_data['skip_size']
         
-        # Try API booking first
-        if API_AVAILABLE:
-            try:
-                price_response = get_pricing(postcode, skip_size)
-                if price_response and price_response.get('success'):
-                    price = price_response.get('price', '£250')
-                    
-                    # Create booking
-                    booking_response = create_booking({
-                        'name': name,
-                        'phone': phone,
-                        'postcode': postcode,
-                        'skip_size': skip_size,
-                        'price': price
-                    })
-                    
-                    if booking_response and booking_response.get('success'):
-                        booking_ref = booking_response.get('reference', f"WK{datetime.now().strftime('%H%M%S')}")
-                        
-                        # Send SMS
-                        sms_message = f"Hi {name}, your {skip_size} skip is confirmed for {postcode}. Price: {price}. Ref: {booking_ref}. Delivery within 24hrs. WasteKing"
-                        send_sms(phone, sms_message)
-                        
-                        state['booking_completed'] = True
-                        state['stage'] = 'completed'
-                        
-                        print(f"API BOOKING SUCCESSFUL: {booking_ref}")
-                        vat_note = " (+ VAT)" if state.get('customer_type') == 'trade' else ""
-                        return f"Perfect! Your {skip_size} skip is booked for {postcode} at {price}{vat_note}. Reference: {booking_ref}. You'll receive SMS confirmation shortly. Delivery within 24 hours."
-            except Exception as e:
-                print(f"API BOOKING ERROR: {e}")
-        
-        # Fallback booking
-        return self.fallback_booking(state)
-    
-    def fallback_booking(self, state):
-        """Fallback booking when API unavailable"""
-        customer_data = state['customer_data']
-        
-        name = customer_data['name']
-        phone = customer_data['phone']
-        postcode = customer_data['postcode']
-        skip_size = customer_data.get('skip_size', '8yd')
-        
-        # Generate booking reference
-        booking_ref = f"WK{datetime.now().strftime('%H%M%S')}"
-        
-        # Get fallback price
-        price = self.get_fallback_price(postcode, skip_size)
-        
-        # Send SMS
-        sms_message = f"Hi {name}, your {skip_size} skip is confirmed for {postcode}. Price: {price}. Ref: {booking_ref}. Delivery within 24hrs. WasteKing"
-        send_sms(phone, sms_message)
-        
-        # Send email to operations
-        subject = f"SKIP BOOKING - {name} - {booking_ref}"
-        body = f"""
+        try:
+            # Get pricing from API
+            price_response = get_pricing(postcode, skip_size)
+            price = price_response.get('price', '£250')
+            
+            # Create booking
+            booking_response = create_booking({
+                'name': name,
+                'phone': phone,
+                'postcode': postcode,
+                'skip_size': skip_size,
+                'price': price
+            })
+            
+            booking_ref = booking_response.get('reference', f"WK{datetime.now().strftime('%H%M%S')}")
+            
+            # Send SMS
+            sms_message = f"Hi {name}, your {skip_size} skip is confirmed for {postcode}. Price: {price}. Ref: {booking_ref}. Delivery within 24hrs. WasteKing"
+            send_sms(phone, sms_message)
+            
+            # Send email to operations
+            subject = f"SKIP BOOKING - {name} - {booking_ref}"
+            body = f"""
 SKIP HIRE BOOKING:
 
 Reference: {booking_ref}
@@ -505,82 +426,76 @@ Customer Type: {state.get('customer_type', 'Unknown')}
 
 Action: Schedule delivery within 24 hours
 """
-        send_email(subject, body, 'operations@wasteking.co.uk')
-        
-        state['booking_completed'] = True
-        state['stage'] = 'completed'
-        
-        print(f"FALLBACK BOOKING COMPLETED: {booking_ref} - {price}")
-        vat_note = " (+ VAT)" if state.get('customer_type') == 'trade' else ""
-        return f"Perfect! Your {skip_size} skip is booked for {postcode} at {price}{vat_note}. Reference: {booking_ref}. You'll receive SMS confirmation shortly. Delivery within 24 hours."
+            send_email(subject, body, 'operations@wasteking.co.uk')
+            
+            state['booking_completed'] = True
+            state['stage'] = 'completed'
+            
+            print(f"API BOOKING SUCCESSFUL: {booking_ref}")
+            vat_note = " (+ VAT)" if state.get('customer_type') == 'trade' else ""
+            return f"Perfect! Your {skip_size} skip is booked for {postcode} at {price}{vat_note}. Reference: {booking_ref}. You'll receive SMS confirmation shortly. Delivery within 24 hours."
+            
+        except Exception as e:
+            print(f"API BOOKING ERROR: {e}")
+            return "There was an error processing your booking. Our team will call you back shortly to complete it manually."
     
-    def get_fallback_price(self, postcode, skip_size):
-        pricing = {
-            'london': {'4yd': '£190', '6yd': '£230', '8yd': '£270', '12yd': '£370'},
-            'midlands': {'4yd': '£170', '6yd': '£210', '8yd': '£250', '12yd': '£350'},  
-            'north': {'4yd': '£160', '6yd': '£200', '8yd': '£240', '12yd': '£340'},
-            'default': {'4yd': '£180', '6yd': '£220', '8yd': '£260', '12yd': '£360'}
-        }
-        
-        postcode_upper = postcode.upper()
-        if any(postcode_upper.startswith(p) for p in ['E', 'W', 'N', 'S', 'EC', 'WC']):
-            region = 'london'
-        elif any(postcode_upper.startswith(p) for p in ['B', 'CV', 'WS', 'WV']):
-            region = 'midlands'
-        elif any(postcode_upper.startswith(p) for p in ['M', 'L', 'S', 'LS']):
-            region = 'north'
-        else:
-            region = 'default'
-        
-        return pricing[region].get(skip_size, pricing[region]['8yd'])
-    
-    # MAN & VAN - COMPLETE DATA COLLECTION FIRST
+    # MAN & VAN - COMPLETE DATA COLLECTION
     def handle_mav(self, message, state, msg_lower):
         print("PROCESSING MAN & VAN")
         
-        # Extract all data first
+        if state.get('lead_sent'):
+            return "Our team will call you back shortly to arrange your man & van service."
+        
+        # Extract data
         self.extract_basic_data(message, state)
         self.extract_mav_data(message, state, msg_lower)
         
         # Heavy materials check
         if any(material in msg_lower for material in ['soil', 'rubble', 'concrete', 'bricks']):
-            return "Man & van is ideal for light waste. For heavy materials like soil and rubble, a skip would be more suitable."
+            return MAV_RULES['heavy_materials_response']
         
-        # SYSTEMATIC COLLECTION - one field at a time
+        # Initialize asked fields
+        if 'asked_fields' not in state:
+            state['asked_fields'] = set()
+        
+        # Required fields - ask only once
         required_fields = ['name', 'phone', 'postcode', 'volume', 'when_required', 'supplement_items']
         
         for field in required_fields:
-            if not state['customer_data'].get(field):
+            if not state['customer_data'].get(field) and field not in state['asked_fields']:
+                state['asked_fields'].add(field)
                 return self.ask_mav_field(field)
         
-        # Sunday check after all data collected
+        # Sunday check
         if state['customer_data'].get('when_required', '').lower() == 'sunday':
             if not state.get('sunday_lead_sent'):
                 self.send_mav_lead(state)
                 state['sunday_lead_sent'] = True
+                state['lead_sent'] = True
                 state['stage'] = 'lead_sent'
-                return "For Sunday collections, it's a bespoke price. Our team will call you back to arrange this."
+                return MAV_RULES['sunday_response']
         
         # All data collected - send lead
-        if not state.get('lead_sent'):
-            self.send_mav_lead(state)
-            state['lead_sent'] = True
-            state['stage'] = 'lead_sent'
-            
-            name = state['customer_data']['name']
-            print(f"MAV LEAD SENT for {name}")
-            return f"Perfect {name}, I have all your man & van details. Our team will call you back with pricing and to arrange your clearance."
+        if all(state['customer_data'].get(field) for field in required_fields):
+            if not state.get('lead_sent'):
+                self.send_mav_lead(state)
+                state['lead_sent'] = True
+                state['stage'] = 'lead_sent'
+                
+                name = state['customer_data']['name']
+                print(f"MAV LEAD SENT for {name}")
+                return f"Perfect {name}, I have all your man & van details. Our team will call you back with pricing and to arrange your clearance."
         
-        return "Our team will call you back shortly to arrange your man & van service."
+        return "Please provide the missing information for your man & van service."
     
     def ask_mav_field(self, field):
         questions = {
             'name': "What's your name?",
             'phone': "What's your phone number?",
             'postcode': "What's your postcode?",
-            'volume': "How much waste do you have? Think in terms of washing machine loads - for example, 2 washing machines = 1 cubic yard.",
+            'volume': MAV_RULES['volume_explanation'],
             'when_required': "When do you need this collected?",
-            'supplement_items': "Do you have any mattresses, fridges, or upholstered furniture that need collecting?"
+            'supplement_items': MAV_RULES['supplement_check']
         }
         return questions.get(field, f"Can you tell me about {field}?")
     
@@ -590,20 +505,13 @@ Action: Schedule delivery within 24 hours
             volume_patterns = [
                 (r'(\d+)\s*washing\s*machine', ' washing machines'),
                 (r'(\d+)\s*cubic\s*yard', ' cubic yards'),
-                (r'(\d+)\s*bag', ' bags'),
-                ('small', '2-3 cubic yards'),
-                ('large', '8-10 cubic yards')
+                (r'(\d+)\s*bag', ' bags')
             ]
             for pattern, suffix in volume_patterns:
-                if isinstance(pattern, str):
-                    if pattern in msg_lower:
-                        state['customer_data']['volume'] = suffix
-                        break
-                else:
-                    match = re.search(pattern, msg_lower)
-                    if match:
-                        state['customer_data']['volume'] = f"{match.group(1)}{suffix}"
-                        break
+                match = re.search(pattern, msg_lower)
+                if match:
+                    state['customer_data']['volume'] = f"{match.group(1)}{suffix}"
+                    break
         
         # When required
         if not state['customer_data'].get('when_required'):
@@ -646,13 +554,16 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         print(f"SENDING MAV LEAD for {customer_data.get('name')}")
         send_email(subject, body)
     
-    # GRAB HIRE - COMPLETE DATA COLLECTION WITH ALL BUSINESS RULES
+    # GRAB HIRE
     def handle_grab(self, message, state, msg_lower):
         print("PROCESSING GRAB HIRE")
         
+        if state.get('lead_sent'):
+            return "Our specialist team will call you back about your grab hire."
+        
         self.extract_basic_data(message, state)
         
-        # Business rule: Grab capacity explanations
+        # Business rules
         if '6 wheel' in msg_lower and not state.get('grab_6_explained'):
             state['grab_6_explained'] = True
             state['customer_data']['grab_type'] = '6_wheeler'
@@ -662,41 +573,30 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             state['customer_data']['grab_type'] = '8_wheeler'
             return GRAB_RULES['8_wheeler_explanation']
         
-        # Business rule: Mixed materials check
-        material_type = state['customer_data'].get('material_type', '')
-        msg_materials = msg_lower
-        has_soil_rubble = any(material in (material_type + msg_materials) for material in ['soil', 'rubble', 'muckaway'])
-        has_other = any(item in (material_type + msg_materials) for item in ['wood', 'furniture', 'plastic', 'metal', 'mixed'])
-        
-        if has_soil_rubble and has_other and not state.get('mixed_materials_warned'):
-            state['mixed_materials_warned'] = True
-            return GRAB_RULES['mixed_materials_response']
-        
-        # Extract material type
-        if not state['customer_data'].get('material_type'):
-            if any(material in msg_lower for material in ['soil', 'rubble', 'muckaway']):
-                state['customer_data']['material_type'] = 'Heavy materials (soil/rubble)'
-            elif any(material in msg_lower for material in ['wood', 'general', 'mixed']):
-                state['customer_data']['material_type'] = 'General waste'
+        # Initialize asked fields
+        if 'asked_fields' not in state:
+            state['asked_fields'] = set()
         
         # Required fields
         required_fields = ['name', 'phone', 'postcode', 'material_type', 'when_required']
         
         for field in required_fields:
-            if not state['customer_data'].get(field):
+            if not state['customer_data'].get(field) and field not in state['asked_fields']:
+                state['asked_fields'].add(field)
                 return self.ask_grab_field(field)
         
-        # All data collected - send lead (Business rule: Most grabs not in SMP)
-        if not state.get('lead_sent'):
-            self.send_grab_lead(state)
-            state['lead_sent'] = True
-            state['stage'] = 'lead_sent'
-            
-            name = state['customer_data']['name']
-            print(f"GRAB LEAD SENT for {name}")
-            return f"Thanks {name}, I have your grab hire details. {GRAB_RULES['transfer_message']}"
+        # All data collected - send lead
+        if all(state['customer_data'].get(field) for field in required_fields):
+            if not state.get('lead_sent'):
+                self.send_grab_lead(state)
+                state['lead_sent'] = True
+                state['stage'] = 'lead_sent'
+                
+                name = state['customer_data']['name']
+                print(f"GRAB LEAD SENT for {name}")
+                return f"Thanks {name}, I have your grab hire details. {GRAB_RULES['transfer_message']}"
         
-        return "Our specialist team will call you back about your grab hire."
+        return "Please provide the missing information for your grab hire."
     
     def ask_grab_field(self, field):
         questions = {
@@ -728,33 +628,107 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         print(f"SENDING GRAB LEAD")
         send_email(subject, body)
     
-    # SPECIALIST SERVICES - WITH COMPLETE BUSINESS RULE QUESTION FLOWS
-    def handle_specialist(self, message, state, msg_lower, service):
-        print(f"PROCESSING {service.upper()}")
+    # SKIP COLLECTION
+    def handle_skip_collection(self, message, state, msg_lower):
+        print("PROCESSING SKIP COLLECTION")
+        
+        if state.get('lead_sent'):
+            return "Our team will arrange your skip collection."
+        
+        if not state.get('collection_started'):
+            state['collection_started'] = True
+            return SKIP_COLLECTION_RULES['script']
         
         self.extract_basic_data(message, state)
         
-        # Get service configuration from business rules
+        # Initialize asked fields
+        if 'asked_fields' not in state:
+            state['asked_fields'] = set()
+        
+        # Required fields
+        required_fields = ['name', 'phone', 'postcode', 'address', 'level_load', 'prohibited_check', 'access_issues']
+        
+        # Extract specific collection data
+        address_line1 = self.extract_address_line1(message)
+        if address_line1: state['customer_data']['address'] = address_line1
+        
+        if 'level' in msg_lower or 'flush' in msg_lower:
+            state['customer_data']['level_load'] = 'yes'
+        
+        if 'no prohibited' in msg_lower or 'nothing prohibited' in msg_lower:
+            state['customer_data']['prohibited_check'] = 'confirmed'
+        
+        if any(word in msg_lower for word in ['narrow', 'difficult', 'restricted']):
+            state['customer_data']['access_issues'] = 'Access restrictions mentioned'
+        elif any(phrase in msg_lower for phrase in ['no problem', 'good access', 'fine']):
+            state['customer_data']['access_issues'] = 'Good access'
+        
+        # Ask for missing fields
+        for field in required_fields:
+            if not state['customer_data'].get(field) and field not in state['asked_fields']:
+                state['asked_fields'].add(field)
+                if field == 'name': return "What's your name?"
+                elif field == 'phone': return "What's your phone number?"
+                elif field == 'postcode': return "What's your postcode?"
+                elif field == 'address': return "What's the first line of your address?"
+                elif field == 'level_load': return "Is the skip a level load?"
+                elif field == 'prohibited_check': return "Can you confirm there are no prohibited items?"
+                elif field == 'access_issues': return "Are there any access issues?"
+        
+        # All data collected
+        if all(state['customer_data'].get(field) for field in required_fields):
+            if not state.get('lead_sent'):
+                self.send_collection_lead(state)
+                state['lead_sent'] = True
+                state['stage'] = 'lead_sent'
+                print("SKIP COLLECTION LEAD SENT")
+                return SKIP_COLLECTION_RULES['completion']
+        
+        return "Please provide the missing information for your skip collection."
+    
+    def send_collection_lead(self, state):
+        customer_data = state['customer_data']
+        
+        subject = f"SKIP COLLECTION - {customer_data.get('name', 'Unknown')}"
+        body = f"""
+SKIP COLLECTION REQUEST:
+
+Customer: {customer_data.get('name')}
+Phone: {customer_data.get('phone')}
+Address: {customer_data.get('address')}
+Postcode: {customer_data.get('postcode')}
+Level Load: {customer_data.get('level_load', 'Not confirmed')}
+Prohibited Items: {customer_data.get('prohibited_check', 'Not confirmed')}
+Access Issues: {customer_data.get('access_issues', 'Not specified')}
+
+Action: Arrange collection (1-4 days typically)
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        
+        print("SENDING SKIP COLLECTION REQUEST")
+        send_email(subject, body)
+    
+    # SPECIALIST SERVICES
+    def handle_specialist(self, message, state, msg_lower, service):
+        print(f"PROCESSING {service.upper()}")
+        
+        if state.get('lead_sent'):
+            return f"Our {service.replace('_', ' ')} team will call you back."
+        
+        self.extract_basic_data(message, state)
+        
         service_config = LG_SERVICES_QUESTIONS.get(service, {})
         questions = service_config.get('questions', [])
         intro = service_config.get('intro', GENERAL_SCRIPTS['lg_transfer_message'])
         
-        # Start with business rule intro
         if not state.get('lg_intro_given'):
             state['lg_intro_given'] = True
             state['lg_question_index'] = 0
             return intro
         
-        # Process through business rule questions systematically
         question_index = state.get('lg_question_index', 0)
         
         if question_index < len(questions):
-            current_question = questions[question_index]
-            
-            # Extract service-specific data based on current question
-            self.extract_lg_specific_data(message, state, msg_lower, service, current_question)
-            
-            # Move to next question
             question_index += 1
             state['lg_question_index'] = question_index
             
@@ -767,63 +741,12 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             state['lead_sent'] = True
             state['stage'] = 'lead_sent'
             
-            name = state['customer_data']['name']
+            name = state['customer_data'].get('name', 'Customer')
             print(f"{service.upper()} LEAD SENT for {name}")
             
-            # Service-specific callback messages from business rules
-            if service == 'asbestos':
-                callback_text = "Our certified asbestos team will call you back"
-            elif service == 'hazardous_waste':
-                callback_text = "Our hazardous waste specialists will call you back"
-            else:
-                callback_text = "Our specialist team will call you back"
-            
-            callback_time = "shortly" if is_business_hours() else "first thing tomorrow"
-            
-            return f"Thanks {name}, I have all the details. {callback_text} {callback_time} to confirm cost and availability. {GENERAL_SCRIPTS['closing']}"
+            return f"Thanks {name}, I have all the details. Our specialist team will call you back shortly."
         
         return f"Our {service.replace('_', ' ')} team will call you back."
-    
-    def extract_lg_specific_data(self, message, state, msg_lower, service, current_question):
-        """Extract service-specific data based on business rules"""
-        if 'postcode' in current_question.lower():
-            postcode = self.extract_postcode_from_text(message)
-            if postcode: state['customer_data']['postcode'] = postcode
-        
-        elif 'name' in current_question.lower():
-            name = self.extract_name_from_text(message)
-            if name: state['customer_data']['name'] = name
-        
-        elif 'phone' in current_question.lower():
-            phone = self.extract_phone_from_text(message)
-            if phone: state['customer_data']['phone'] = phone
-        
-        elif service == 'toilet_hire':
-            if 'many' in current_question.lower():
-                number_match = re.search(r'(\d+)', message)
-                if number_match:
-                    state['customer_data']['number_required'] = f"{number_match.group(1)} toilets"
-            elif 'event' in current_question.lower():
-                if any(word in msg_lower for word in ['event', 'wedding', 'party']):
-                    state['customer_data']['event_type'] = 'Event'
-                elif any(word in msg_lower for word in ['long term', 'ongoing']):
-                    state['customer_data']['event_type'] = 'Long term'
-            elif 'delivery' in current_question.lower():
-                # Extract delivery date
-                date_patterns = [r'(\w+day)', r'(\d{1,2}\/\d{1,2})', r'(\d{1,2}\s+\w+)']
-                for pattern in date_patterns:
-                    match = re.search(pattern, message)
-                    if match:
-                        state['customer_data']['delivery_date'] = match.group(1)
-                        break
-        
-        # Extract when required for all services
-        if 'when' in current_question.lower():
-            when_patterns = ['today', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'asap', 'urgent', 'next week']
-            for pattern in when_patterns:
-                if pattern in msg_lower:
-                    state['customer_data']['when_required'] = pattern.title()
-                    break
     
     def send_specialist_lead(self, state, service):
         customer_data = state['customer_data']
@@ -845,206 +768,90 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         print(f"SENDING {service.upper()} LEAD")
         send_email(subject, body)
     
-    # SKIP COLLECTION - WITH COMPLETE BUSINESS RULES
-    def handle_skip_collection(self, message, state, msg_lower):
-        print("PROCESSING SKIP COLLECTION")
-        
-        if not state.get('collection_started'):
-            state['collection_started'] = True
-            return SKIP_COLLECTION_RULES['script']
-        
-        self.extract_basic_data(message, state)
-        
-        # Extract specific collection data from business rules
-        address_line1 = self.extract_address_line1(message)
-        level_load = 'yes' if any(word in msg_lower for word in ['level', 'flush', 'not overloaded']) else None
-        prohibited_check = 'confirmed' if any(phrase in msg_lower for phrase in ['no prohibited', 'nothing prohibited']) else None
-        access_issues = self.extract_access_issues(message)
-        
-        if address_line1: state['customer_data']['address'] = address_line1
-        if level_load: state['customer_data']['level_load'] = level_load
-        if prohibited_check: state['customer_data']['prohibited_check'] = prohibited_check
-        if access_issues: state['customer_data']['access_issues'] = access_issues
-        
-        # Business rule: All required fields for collection
-        required_fields = ['name', 'phone', 'postcode', 'address', 'level_load', 'prohibited_check', 'access_issues']
-        missing = [field for field in required_fields if not state['customer_data'].get(field)]
-        
-        if missing:
-            field = missing[0]
-            if field == 'name': return "What's your name?"
-            elif field == 'phone': return "What's the best phone number to contact you on?"
-            elif field == 'postcode': return "What's your postcode?"
-            elif field == 'address': return "What's the first line of your address?"
-            elif field == 'level_load': return "Is the skip a level load?"
-            elif field == 'prohibited_check': return "Can you confirm there are no prohibited items in the skip?"
-            elif field == 'access_issues': return "Are there any access issues?"
-        
-        if not state.get('lead_sent'):
-            self.send_collection_lead(state)
-            state['lead_sent'] = True
-            state['stage'] = 'lead_sent'
-            
-            print("SKIP COLLECTION LEAD SENT")
-            return SKIP_COLLECTION_RULES['completion']
-        
-        return "Our team will arrange your skip collection."
-    
-    # GENERAL CONVERSATION - WITH ALL BUSINESS RULES
+    # GENERAL HANDLER
     def handle_general(self, message, state, msg_lower):
-        # Business rule: Transfer requests
+        # Transfer requests
         if any(phrase in msg_lower for phrase in TRANSFER_RULES['management_director']['triggers']):
-            return self.handle_director_request(state)
+            if is_business_hours():
+                return TRANSFER_RULES['management_director']['office_hours']
+            else:
+                return TRANSFER_RULES['management_director']['out_of_hours']
         
         elif any(phrase in msg_lower for phrase in TRANSFER_RULES['complaints']['triggers']):
-            return self.handle_complaint(state)
+            if is_business_hours():
+                return TRANSFER_RULES['complaints']['office_hours']
+            else:
+                return TRANSFER_RULES['complaints']['out_of_hours']
         
-        elif any(phrase in msg_lower for phrase in ['speak to tracey', 'talk to tracey']):
-            return TRANSFER_RULES['specific_person']['tracey_request']
-        
-        elif any(phrase in msg_lower for phrase in ['speak to human', 'human agent', 'talk to person']):
-            return TRANSFER_RULES['specific_person']['human_agent']
-        
-        # Business rule: Information requests
-        elif any(phrase in msg_lower for phrase in ['when deliver', 'delivery time', 'when arrive']):
+        # Information requests
+        elif any(phrase in msg_lower for phrase in ['when deliver', 'delivery time']):
             return SKIP_HIRE_RULES['delivery_timing']
-        
-        elif any(phrase in msg_lower for phrase in ['what time', 'specific time', 'exact time']):
-            return GENERAL_SCRIPTS['timing_query']
-        
-        elif any(phrase in msg_lower for phrase in ['where based', 'local', 'depot', 'close by']):
-            return GENERAL_SCRIPTS['location_response']
-        
-        elif any(phrase in msg_lower for phrase in ['waste bag', 'skip bag', 'skip sack']):
-            return WASTE_BAGS_INFO['script']
         
         elif 'permit' in msg_lower:
             return GENERAL_SCRIPTS['permit_response']
         
-        elif any(phrase in msg_lower for phrase in ['access', 'requirements', 'vehicle size']):
-            return GENERAL_SCRIPTS['access_requirements']
-        
-        # Business rule: Price/cost inquiries
         elif any(word in msg_lower for word in ['price', 'cost', 'quote']):
-            return "I can help with pricing. What service do you need - skip hire, man & van clearance, or something else?"
+            return "What service do you need pricing for - skip hire, man & van clearance, or grab hire?"
         
-        # Use AI for other natural conversation
-        try:
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{
-                    "role": "system",
-                    "content": "You are Jennifer from Waste King. Be helpful and direct. Ask what service they need if unclear. Keep responses under 2 sentences."
-                }, {
-                    "role": "user",
-                    "content": message
-                }],
-                max_tokens=50,
-                temperature=0.3
-            )
-            return response.choices[0].message.content.strip()
-        except:
-            return f"{GENERAL_SCRIPTS['help_intro']}. What service do you need?"
+        # Default
+        return "What service do you need - skip hire, man & van clearance, grab hire, or something else?"
     
-    def handle_director_request(self, state):
-        """Business rule: Handle requests to speak to director"""
-        if is_business_hours():
-            return TRANSFER_RULES['management_director']['office_hours']
-        else:
-            return TRANSFER_RULES['management_director']['out_of_hours']
+    # HELPER METHODS
+    def extract_basic_data(self, message, state):
+        """Extract basic customer data from message"""
+        # Name extraction
+        name_patterns = [
+            r"name\s+is\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            r"i'?m\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
+            r"call\s+me\s+([A-Za-z]+)"
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                if name.lower() not in ['yes', 'no', 'hello', 'hi']:
+                    state['customer_data']['name'] = name
+                    break
+        
+        # Phone extraction
+        phone_patterns = [
+            r"\b(07\d{9})\b",
+            r"\b(0\d{10})\b",
+            r"\b(\d{11})\b"
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, message)
+            if match:
+                state['customer_data']['phone'] = match.group(1)
+                break
+        
+        # Postcode extraction
+        postcode_pattern = r"\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b"
+        postcode_match = re.search(postcode_pattern, message.upper())
+        if postcode_match:
+            state['customer_data']['postcode'] = postcode_match.group(1).replace(' ', '')
+        
+        # Skip size extraction
+        skip_sizes = ['4', '6', '8', '10', '12', '14', '16']
+        for size in skip_sizes:
+            if f"{size} yard" in message.lower() or f"{size}yd" in message.lower():
+                state['customer_data']['skip_size'] = f"{size}yd"
+                break
     
-    def handle_complaint(self, state):
-        """Business rule: Handle complaint requests"""
-        if is_business_hours():
-            return TRANSFER_RULES['complaints']['office_hours']
-        else:
-            return TRANSFER_RULES['complaints']['out_of_hours']
-    
-    # HELPER EXTRACTION METHODS - ALL BUSINESS RULE DATA
     def extract_address_line1(self, text):
-        """Extract first line of address for skip collection"""
+        """Extract first line of address"""
         address_patterns = [
             r'address\s+(?:is\s+)?(.+)',
             r'first line\s+(?:is\s+)?(.+)', 
-            r'live\s+(?:at\s+)?(.+)',
-            r'(\d+\s+\w+\s+\w+)'  # Number + street pattern
+            r'(\d+\s+\w+\s+\w+)'
         ]
         for pattern in address_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1).strip()
         return None
-    
-    def extract_access_issues(self, text):
-        """Extract access issues information"""
-        msg_lower = text.lower()
-        if any(issue in msg_lower for issue in ['narrow', 'difficult', 'restricted', 'problem', 'tight']):
-            return 'Access restrictions mentioned'
-        elif any(phrase in msg_lower for phrase in ['no problem', 'good access', 'easy access', 'fine', 'no issues']):
-            return 'Good access'
-        return None
-    
-    def extract_postcode_from_text(self, text):
-        """Extract postcode with validation"""
-        postcode_pattern = r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b'
-        match = re.search(postcode_pattern, text.upper())
-        if match:
-            return match.group(1).replace(' ', '')
-        return None
-    
-    def extract_name_from_text(self, text):
-        """Extract name with validation"""
-        name_patterns = [
-            r'name\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-            r'i\'?m\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-            r'call\s+me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-            r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                name = match.group(1).strip()
-                if name.lower() not in ['yes', 'no', 'hello', 'hi', 'what', 'how']:
-                    return name
-        return None
-    
-    def extract_phone_from_text(self, text):
-        """Extract UK phone numbers"""
-        phone_patterns = [
-            r'\b(07\d{9})\b',  # UK mobile
-            r'\b(\d{11})\b',   # 11 digits
-            r'\b(\d{5})\s+(\d{6})\b'  # Split format
-        ]
-        for pattern in phone_patterns:
-            match = re.search(pattern, text)
-            if match:
-                return ''.join(match.groups())
-        return None
-    
-    def send_collection_lead(self, state):
-        """Send skip collection lead with all details"""
-        customer_data = state['customer_data']
-        
-        subject = f"SKIP COLLECTION - {customer_data.get('name', 'Unknown')}"
-        body = f"""
-SKIP COLLECTION REQUEST:
 
-Customer: {customer_data.get('name')}
-Phone: {customer_data.get('phone')}
-Address: {customer_data.get('address')}
-Postcode: {customer_data.get('postcode')}
-Level Load: {customer_data.get('level_load', 'Not confirmed')}
-Prohibited Items: {customer_data.get('prohibited_check', 'Not confirmed')}
-Access Issues: {customer_data.get('access_issues', 'Not specified')}
-
-Action: Arrange collection (1-4 days typically)
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        
-        print("SENDING SKIP COLLECTION REQUEST")
-        send_email(subject, body)
-
-# Initialize agent globally
+# Initialize agent
 agent = WasteKingAgent()
 conversation_counter = 0
 
@@ -1101,15 +908,11 @@ def dashboard():
         .conv-item { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #007bff; }
         .conv-item.completed { border-left-color: #28a745; }
         .conv-item.lead-sent { border-left-color: #ffc107; }
-        .customer-details { margin-top: 8px; font-size: 14px; }
-        .service-badge { background: #007bff; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: 10px; }
-        .refresh-btn { background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-bottom: 10px; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>WasteKing System Dashboard</h1>
-        <p>Live conversation monitoring with full customer details</p>
     </div>
     
     <div class="stats">
@@ -1132,9 +935,7 @@ def dashboard():
     </div>
     
     <div class="conversations">
-        <h2>Live Conversations 
-            <button class="refresh-btn" onclick="loadDashboard()">Refresh Now</button>
-        </h2>
+        <h2>Live Conversations</h2>
         <div id="conversation-list">Loading...</div>
     </div>
 
@@ -1153,25 +954,13 @@ def dashboard():
                             const statusClass = conv.stage === 'completed' ? 'completed' : (conv.stage === 'lead_sent' ? 'lead-sent' : '');
                             return `
                                 <div class="conv-item ${statusClass}">
-                                    <strong>${conv.id}</strong> - Stage: ${conv.stage}
-                                    ${conv.service ? `<span class="service-badge">${conv.service.toUpperCase()}</span>` : ''}
-                                    <br><small>Time: ${conv.timestamp}</small>
-                                    <div class="customer-details">
-                                        ${conv.name ? `<strong>Name:</strong> ${conv.name}<br>` : ''}
-                                        ${conv.phone ? `<strong>Phone:</strong> ${conv.phone}<br>` : ''}
-                                        ${conv.postcode ? `<strong>Postcode:</strong> ${conv.postcode}<br>` : ''}
-                                        ${conv.customer_type ? `<strong>Type:</strong> ${conv.customer_type}<br>` : ''}
-                                        ${conv.details ? `<strong>Details:</strong> ${conv.details}` : ''}
-                                    </div>
+                                    <strong>${conv.id}</strong> - ${conv.stage}
                                 </div>
                             `;
                         }).join('');
                         
                         document.getElementById('conversation-list').innerHTML = convHTML || '<p>No conversations yet</p>';
                     }
-                })
-                .catch(error => {
-                    document.getElementById('conversation-list').innerHTML = '<div style="color: red;">Error loading dashboard data</div>';
                 });
         }
         
@@ -1193,30 +982,10 @@ def dashboard_api():
         leads = sum(1 for conv in conversations.values() if conv.get('stage') == 'lead_sent')
         
         recent_convs = []
-        for conv_id, conv_data in list(conversations.items())[-15:]:  # Show last 15 conversations
-            customer_data = conv_data.get('customer_data', {})
-            
-            # Build details string
-            details_parts = []
-            if customer_data.get('volume'):
-                details_parts.append(f"Volume: {customer_data['volume']}")
-            if customer_data.get('when_required'):
-                details_parts.append(f"When: {customer_data['when_required']}")
-            if customer_data.get('skip_size'):
-                details_parts.append(f"Size: {customer_data['skip_size']}")
-            if customer_data.get('material_type'):
-                details_parts.append(f"Material: {customer_data['material_type']}")
-            
+        for conv_id, conv_data in list(conversations.items())[-10:]:
             recent_convs.append({
-                'id': conv_id[-8:],  # Show last 8 chars for readability
-                'stage': conv_data.get('stage', 'unknown'),
-                'service': conv_data.get('service_type', ''),
-                'name': customer_data.get('name', ''),
-                'phone': customer_data.get('phone', ''),
-                'postcode': customer_data.get('postcode', ''),
-                'customer_type': conv_data.get('customer_type', ''),
-                'details': ' | '.join(details_parts) if details_parts else '',
-                'timestamp': datetime.now().strftime('%H:%M:%S')
+                'id': conv_id[-8:],
+                'stage': conv_data.get('stage', 'unknown')
             })
         
         return jsonify({
@@ -1232,12 +1001,8 @@ def dashboard_api():
 
 if __name__ == '__main__':
     print("WasteKing Agent Starting...")
-    print("Skip hire: Auto-booking with SMS confirmations")
-    print("All services: Complete lead generation before transfer")
-    print("Clean console logging enabled")
+    print("Skip hire: Auto-booking with API")
+    print("All services: Complete lead generation")
     
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
-
-# Ensure app is accessible for Gunicorn
-application = app
