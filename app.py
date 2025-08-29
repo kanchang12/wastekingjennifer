@@ -1189,7 +1189,7 @@ class BaseAgent:
             send_webhook(conversation_id, state, 'api_error')
             return "Booking issue occurred. Our team will contact you."
 
-      def check_for_missing_info(self, state, service_type):
+    def check_for_missing_info(self, state, service_type):
         collected_data = state.get('collected_data', {})
         required = REQUIRED_FIELDS.get(service_type, [])
         
