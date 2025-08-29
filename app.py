@@ -1,4 +1,110 @@
-import os
+@app.route('/api/wasteking', methods=['POST'])
+def process_message():
+    try:
+        data = request.get_json()
+        customer_message = data.get('customerquestion', '').strip()
+        conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id', '')
+        
+        if not customer_message:
+            return jsonify({"success": False, "message": "What service do you need?"}), 200
+        
+        if not conversation_id:
+            conversation_id = f"conv_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        print(f"\n[{conversation_id}] Customer: {customer_message}")
+        
+        # Get/create state
+        state = get_conversation_state(conversation_id)
+        if 'customer_data' not in state:
+            state['customer_data'] = {}
+        
+        msg_lower = customer_message.lower()
+        response = ""
+        
+        # DIRECT SERVICE DETECTION AND HANDLING
+        
+        # 1. SKIP HIRE DETECTION
+        if any(phrase in msg_lower for phrase in ['skip', 'need a skip', 'book skip', 'hire skip']) or state.get('service_type') == 'skip_hire':
+            state['service_type'] = 'skip_hire'
+            
+            # Extract data from message
+            extract_customer_data_from_message(customer_message, state['customer_data'])
+            
+            # Check what's missing and ask for it
+            if not state['customer_data'].get('name'):
+                response = "What's your name?"
+            elif not state['customer_data'].get('phone'):
+                response = "What's your phone number?"
+            elif not state['customer_data'].get('postcode'):
+                response = "What's your postcode?"
+            elif not state['customer_data'].get('skip_size'):
+                response = "What size skip do you need? We have 4, 6, 8, 12 yard skips."
+            else:
+                # We have everything - BOOK IT
+                response = book_skip_now(state['customer_data'])
+                state['stage'] = 'completed'
+        
+        # 2. MAN AND VAN DETECTION
+        elif any(phrase in msg_lower for phrase in ['man and van', 'clearance', 'rubbish removal']) or state.get('service_type') == 'man_and_van':
+            state['service_type'] = 'man_and_van'
+            
+            extract_customer_data_from_message(customer_message, state['customer_data'])
+            
+            if not state['customer_data'].get('name'):
+                response = "What's your name?"
+            elif not state['customer_data'].get('phone'):
+                response = "What's your phone number?"
+            elif not state['customer_data'].get('postcode'):
+                response = "What's your postcode?"
+            elif not state['customer_data'].get('volume'):
+                response = MAV_RULES['volume_explanation']
+            else:
+                # Send lead
+                send_mav_lead(state['customer_data'])
+                response = f"Perfect {state['customer_data']['name']}, our team will call you back with pricing."
+                state['stage'] = 'lead_sent'
+        
+        # 3. GRAB HIRE DETECTION
+        elif any(phrase in msg_lower for phrase in ['grab', 'grab lorry', 'grab hire']) or state.get('service_type') == 'grab_hire':
+            state['service_type'] = 'grab_hire'
+            
+            extract_customer_data_from_message(customer_message, state['customer_data'])
+            
+            if not state['customer_data'].get('name'):
+                response = "What's your name?"
+            elif not state['customer_data'].get('phone'):
+                response = "What's your phone number?"
+            elif not state['customer_data'].get('postcode@app.route('/api/wasteking', methods=['POST'])
+def process_message():
+    try:
+        data = request.get_json()
+        customer_message = data.get('customerquestion', '').strip()
+        conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id', '')
+        
+        if not customer_message:
+            return jsonify({"success": False, "message": "No message provided"}), 400
+        
+        if not conversation_id:
+            conversation_id = f"conv_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        print(f"\n[{conversation_id}] Customer: {customer_message}")
+        
+        # Get existing state
+        state = get_conversation_state(conversation_id)
+        
+        # SIMPLE DIRECT HANDLING - NO COMPLEX AI
+        msg_lower = customer_message.lower()
+        
+        # Detect skip hire immediately
+        if any(phrase in msg_lower for phrase in ['skip', 'skip hire', 'need a skip', 'book a skip']):
+            state['service_type'] = 'skip_hire'
+            
+            # Check what we have
+            customer_data = state.get('customer_data', {})
+            
+            # Extract any data from message
+            if not customer_data.get('name'):
+                name_match = re.search(r"(?:name is |i'm |i am |call me )([A-Za-z]+import os
 import re
 import json
 import requests
@@ -39,8 +145,15 @@ def get_conversation_state(conversation_id: str) -> dict:
         except:
             pass
     else:
-        return CONVERSATION_STATES.get(conversation_id, {})
+        return CONVERSATION_STATES.get(conversation_id, {
+            'customer_data': {},
+            'service_type': None,
+            'stage': 'start',
+            'history': [],
+            'asked_fields': set()
+        })
     
+    # Return default state with ALL required fields
     return {
         'customer_data': {},
         'service_type': None,
@@ -639,7 +752,7 @@ class WasteKingAgent:
                 send_email(
                     f"SKIP COLLECTION - {customer_name}",
                     f"Customer: {customer_name}\nPhone: {phone}\nPostcode: {postcode}\n\nAction: Arrange collection",
-                    'kanchan.g12@gmail.com'
+                    'kanchan.ghosh@wasteking.co.uk'
                 )
                 state['stage'] = 'collection_requested'
                 return f"Thanks {customer_name}, I've arranged for your skip collection at {postcode}. Our team will contact you on {phone} to confirm the collection time."
@@ -889,7 +1002,7 @@ def send_email(subject: str, body: str, recipient: str = 'kanchan.ghosh@wastekin
 agent = WasteKingAgent()
 
 # Flask routes
-@app.route('/api/wasteking', methods=['POST', 'GET'])
+@app.route('/api/wasteking', methods=['POST'])
 def process_message():
     try:
         data = request.get_json()
@@ -897,34 +1010,297 @@ def process_message():
         conversation_id = data.get('conversation_id') or data.get('elevenlabs_conversation_id', '')
         
         if not customer_message:
-            return jsonify({"success": False, "message": "No message provided"}), 400
+            return jsonify({"success": True, "message": "What service do you need?"}), 200
         
         if not conversation_id:
             conversation_id = f"conv_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         print(f"\n[{conversation_id}] Customer: {customer_message}")
+        msg_lower = customer_message.lower()
         
-        # Process with OpenAI function calling
-        response_text, stage = agent.process_message_with_functions(customer_message, conversation_id)
+        # Get state - ensure it has all fields
+        state = get_conversation_state(conversation_id)
         
-        print(f"[{conversation_id}] Agent: {response_text}")
+        # SKIP HIRE DETECTION AND FULL HANDLING WITH ALL RULES
+        if 'skip' in msg_lower or state.get('service_type') == 'skip_hire':
+            state['service_type'] = 'skip_hire'
+            
+            # CHECK BUSINESS RULES FIRST
+            
+            # Heavy materials check
+            large_skips = ['10', '12', '14', '16', '20']
+            heavy_materials = ['soil', 'rubble', 'concrete', 'bricks', 'earth', 'clay']
+            if any(size in msg_lower for size in large_skips) and any(mat in msg_lower for mat in heavy_materials):
+                response = SKIP_HIRE_RULES['A2_heavy_materials']['heavy_materials_max']
+                state['customer_data']['skip_size'] = '8yd'
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Prohibited items check
+            prohibited_items = SKIP_HIRE_RULES['A5_prohibited_items']['prohibited_list']
+            if any(item in msg_lower for item in ['mattress', 'fridge', 'freezer', 'sofa', 'furniture', 'plasterboard', 'asbestos']):
+                if 'plasterboard' in msg_lower:
+                    response = SKIP_HIRE_RULES['A5_prohibited_items']['plasterboard_response']
+                else:
+                    response = SKIP_HIRE_RULES['A5_prohibited_items']['full_script']
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Delivery timing question
+            if any(phrase in msg_lower for phrase in ['when deliver', 'delivery time', 'how long', 'when arrive']):
+                response = SKIP_HIRE_RULES['delivery_timing']
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Not booking response
+            if any(phrase in msg_lower for phrase in ['think about', 'call back later', 'check with', 'shop around']):
+                response = SKIP_HIRE_RULES['not_booking_response']
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Extract data from message
+            if re.search(r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b', customer_message.upper()):
+                state['customer_data']['postcode'] = re.search(r'\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b', customer_message.upper()).group(1)
+            
+            if re.search(r'\b07\d{9}\b|\b0\d{10}\b', customer_message):
+                state['customer_data']['phone'] = re.search(r'\b(0\d{10}|07\d{9})\b', customer_message).group(1)
+            
+            # Name extraction
+            if not state['customer_data'].get('name'):
+                name_patterns = [
+                    r"(?:name is |i'm |i am |call me |this is )([A-Za-z]+)",
+                    r"^([A-Z][a-z]+)[\s,.]"
+                ]
+                for pattern in name_patterns:
+                    match = re.search(pattern, customer_message, re.I)
+                    if match:
+                        name = match.group(1)
+                        if name.lower() not in ['yes', 'no', 'hello', 'hi']:
+                            state['customer_data']['name'] = name
+                            break
+            
+            # Skip size extraction
+            if not state['customer_data'].get('skip_size'):
+                sizes = ['2', '4', '6', '8', '10', '12', '14', '16', '20']
+                for size in sizes:
+                    if f"{size} yard" in msg_lower or f"{size}yd" in msg_lower:
+                        state['customer_data']['skip_size'] = f"{size}yd"
+                        break
+            
+            # Customer type detection
+            if not state.get('customer_type'):
+                if any(word in msg_lower for word in ['trade', 'business', 'commercial', 'company', 'builder']):
+                    state['customer_type'] = 'trade'
+                elif any(word in msg_lower for word in ['domestic', 'home', 'house', 'personal']):
+                    state['customer_type'] = 'domestic'
+            
+            # SYSTEMATIC DATA COLLECTION
+            cd = state['customer_data']
+            
+            if not cd.get('name'):
+                response = "What's your name?"
+            elif not cd.get('phone'):
+                response = "What's your phone number?"
+            elif not cd.get('postcode'):
+                response = "What's your postcode?"
+            elif not state.get('customer_type'):
+                response = "Are you a domestic or trade customer?"
+            elif not cd.get('skip_size'):
+                response = "What size skip do you need? We have 4, 6, 8, 12 yard skips."
+            elif not state.get('permit_checked'):
+                state['permit_checked'] = True
+                response = SKIP_HIRE_RULES['permit_check']
+            elif 'road' in msg_lower and state.get('permit_checked'):
+                state['needs_permit'] = True
+                response = SKIP_HIRE_RULES['permit_required']
+            elif 'property' in msg_lower and state.get('permit_checked'):
+                state['needs_permit'] = False
+                response = SKIP_HIRE_RULES['no_permit']
+                # Ready to book after this
+            else:
+                # ALL DATA COLLECTED - BOOK THE SKIP
+                vat_text = " (+ VAT)" if state.get('customer_type') == 'trade' else ""
+                try:
+                    # Call API
+                    price_resp = get_pricing(cd['postcode'], cd['skip_size'])
+                    if price_resp.get('success'):
+                        price = price_resp['price']
+                        
+                        # Add permit cost if needed
+                        permit_text = ""
+                        if state.get('needs_permit'):
+                            permit_text = " + permit (£35-85 depending on council)"
+                        
+                        booking_resp = create_booking({
+                            'name': cd['name'],
+                            'phone': cd['phone'],
+                            'postcode': cd['postcode'],
+                            'skip_size': cd['skip_size'],
+                            'price': price,
+                            'customer_type': state.get('customer_type'),
+                            'needs_permit': state.get('needs_permit')
+                        })
+                        
+                        if booking_resp.get('success'):
+                            ref = booking_resp['reference']
+                            
+                            # Get payment link
+                            payment_resp = create_payment_link({
+                                'booking_ref': ref,
+                                'amount': price,
+                                'customer_name': cd['name'],
+                                'phone': cd['phone']
+                            })
+                            
+                            if not payment_resp.get('success'):
+                                # Payment link API failed - route to human
+                                send_email(
+                                    f"PAYMENT LINK FAILED - {cd['name']}",
+                                    f"Payment link API failed\n\nBooking Ref: {ref}\nCustomer: {cd['name']}\nPhone: {cd['phone']}\nAmount: {price}\n\nAction: Send payment link manually"
+                                )
+                                response = f"Your {cd['skip_size']} skip is booked (ref: {ref}). Our team will call you on {cd['phone']} with the payment link."
+                                state['stage'] = 'booking_complete_payment_pending'
+                            else:
+                                link = payment_resp.get('payment_link')
+                                
+                                # Send SMS
+                                sms = f"""Thank You for Choosing Waste King 🌱
+ 
+Please click the secure link below to complete your payment: {link}
+ 
+As part of our service, you'll receive digital waste transfer notes for your records. We're also proud to be planting trees every week to offset our carbon footprint. If you were happy with our service, we'd really appreciate it if you could leave us a review at https://uk.trustpilot.com/review/wastekingrubbishclearance.com. Find out more about us at www.wastekingrubbishclearance.co.uk.
+ 
+Best regards,
+The Waste King Team"""
+                                send_sms(cd['phone'], sms)
+                                
+                                response = f"Perfect {cd['name']}! Your {cd['skip_size']} skip is booked for {cd['postcode']}.\n"
+                                response += f"Price: {price}{vat_text}{permit_text}\n"
+                                response += f"Reference: {ref}\n\n"
+                                response += SKIP_HIRE_RULES['delivery_timing'] + "\n\n"
+                                response += "Check your phone for payment link."
+                                
+                                state['stage'] = 'completed'
+                        else:
+                            response = f"Booking issue. Our team will call you on {cd['phone']} to complete."
+                    else:
+                        send_email(
+                            f"API FAILURE - {cd['name']}",
+                            f"Pricing API failed\n\nCustomer: {cd['name']}\nPhone: {cd['phone']}\nPostcode: {cd['postcode']}\nSkip: {cd['skip_size']}"
+                        )
+                        response = f"Technical issue getting price. Our team will call you on {cd['phone']} to complete your {cd['skip_size']} skip booking."
+                except Exception as e:
+                    print(f"ERROR: {e}")
+                    response = f"Technical issue. Our team will call you on {cd['phone']} to complete your skip booking."
+            
+            save_conversation_state(conversation_id, state)
+            print(f"[{conversation_id}] Agent: {response}")
+            return jsonify({"success": True, "message": response}), 200
         
-        return jsonify({
-            "success": True,
-            "message": response_text,
-            "conversation_id": conversation_id,
-            "timestamp": datetime.now().isoformat(),
-            "stage": stage
-        })
+        # SKIP COLLECTION DETECTION
+        elif any(phrase in msg_lower for phrase in ['skip collection', 'collect skip', 'pick up skip', 'remove skip']):
+            state['service_type'] = 'skip_collection'
+            
+            if not state.get('collection_started'):
+                state['collection_started'] = True
+                response = SKIP_COLLECTION_RULES['script']
+            else:
+                # Process collection questions
+                response = "Our team will arrange your skip collection."
+            
+            save_conversation_state(conversation_id, state)
+            return jsonify({"success": True, "message": response}), 200
+        
+        # MAN AND VAN DETECTION
+        elif any(phrase in msg_lower for phrase in ['man and van', 'clearance', 'rubbish removal']) or state.get('service_type') == 'man_and_van':
+            state['service_type'] = 'man_and_van'
+            
+            # Heavy materials check
+            if any(mat in msg_lower for mat in ['soil', 'rubble', 'concrete', 'bricks']):
+                response = MAV_RULES['heavy_materials_response']
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Sunday check
+            if 'sunday' in msg_lower:
+                response = MAV_RULES['sunday_response']
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+            
+            # Extract data
+            cd = state.get('customer_data', {})
+            
+            if not cd.get('name'):
+                response = "What's your name?"
+            elif not cd.get('phone'):
+                response = "What's your phone number?"
+            elif not cd.get('postcode'):
+                response = "What's your postcode?"
+            elif not cd.get('volume'):
+                response = MAV_RULES['volume_explanation']
+            elif not cd.get('supplement_items'):
+                response = MAV_RULES['supplement_check']
+            elif not cd.get('when_required'):
+                response = "When do you need this collected?"
+            else:
+                # Send lead
+                send_email(
+                    f"MAN & VAN LEAD - {cd['name']}",
+                    f"Customer: {cd['name']}\nPhone: {cd['phone']}\nPostcode: {cd['postcode']}\nVolume: {cd['volume']}\nWhen: {cd.get('when_required')}\nItems: {cd.get('supplement_items')}"
+                )
+                response = f"Perfect {cd['name']}, our team will call you back within the hour with pricing."
+                state['stage'] = 'lead_sent'
+            
+            save_conversation_state(conversation_id, state)
+            return jsonify({"success": True, "message": response}), 200
+        
+        # GRAB HIRE DETECTION
+        elif any(phrase in msg_lower for phrase in ['grab', 'grab lorry', 'grab hire', '6 wheel', '8 wheel']):
+            state['service_type'] = 'grab_hire'
+            
+            # Grab type explanations
+            if '6 wheel' in msg_lower:
+                response = GRAB_RULES['6_wheeler_explanation']
+            elif '8 wheel' in msg_lower:
+                response = GRAB_RULES['8_wheeler_explanation']
+            else:
+                response = GRAB_RULES['transfer_message']
+            
+            save_conversation_state(conversation_id, state)
+            return jsonify({"success": True, "message": response}), 200
+        
+        # COMPLAINTS/DIRECTOR REQUESTS
+        elif any(word in msg_lower for word in TRANSFER_RULES['complaints']['triggers']):
+            if is_business_hours():
+                response = TRANSFER_RULES['complaints']['office_hours']
+            else:
+                response = TRANSFER_RULES['complaints']['out_of_hours']
+            return jsonify({"success": True, "message": response}), 200
+        
+        elif any(phrase in msg_lower for phrase in TRANSFER_RULES['management_director']['triggers']):
+            if is_business_hours():
+                response = TRANSFER_RULES['management_director']['office_hours']
+            else:
+                response = TRANSFER_RULES['management_director']['out_of_hours']
+            return jsonify({"success": True, "message": response}), 200
+        
+        # LG SERVICES DETECTION
+        for service_key, service_data in LG_SERVICES.items():
+            if any(trigger in msg_lower for trigger in service_data['triggers']):
+                state['service_type'] = service_key
+                questions = LG_SERVICES_QUESTIONS.get(service_key, {})
+                response = questions.get('intro', "I'll take your details and our specialist team will call back.")
+                save_conversation_state(conversation_id, state)
+                return jsonify({"success": True, "message": response}), 200
+        
+        # Default - ask what service
+        response = "What service do you need? Skip hire, man & van clearance, grab hire, or something else?"
+        return jsonify({"success": True, "message": response}), 200
         
     except Exception as e:
         print(f"ERROR: {e}")
         traceback.print_exc()
-        return jsonify({
-            "success": False,
-            "message": "I'll connect you with our team immediately.",
-            "error": str(e)
-        }), 500
+        return jsonify({"success": True, "message": "Let me connect you with our team."}), 200
 
 @app.route('/')
 def index():
