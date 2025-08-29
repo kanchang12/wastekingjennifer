@@ -135,13 +135,6 @@ SKIP_HIRE_RULES = {
     }
 }
 
-SKIP_COLLECTION_RULES = {
-    'script': "I can help with that. It can take between 1-4 days to collect a skip. Can I have your postcode, first line of the address, your name, your telephone number, is the skip a level load, can you confirm there are no prohibited items in the skip, are there any access issues?",
-    'completion': "Thanks we can book your skip collection",
-    'level_load_explanation': "A level load means the waste doesn't go above the sides of the skip. Overloaded skips can't be collected for safety reasons.",
-    'access_explanation': "Access issues might include parked cars, low trees, narrow roads, or anything that might prevent our lorry from reaching the skip."
-}
-
 MAV_RULES = {
     'B1_information_gathering': {
         'cubic_yard_explanation': "Our team charges by the cubic yard. To give you an idea, two washing machines equal about one cubic yard. On average, most clearances we do are around six yards."
@@ -155,13 +148,7 @@ MAV_RULES = {
     'B5_additional_timing': {
         'sunday_collections': {'script': "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team and they will be able to help"},
         'time_script': "We can't guarantee exact times, but collection is typically between 7am-6pm"
-    },
-    'supplement_check': "Can I just check — do you have any mattresses, upholstery, or fridges that need collecting?",
-    'sunday_response': "For a collection on a Sunday, it will be a bespoke price. Let me put you through our team and they will be able to help",
-    'time_restriction': "We can't guarantee exact times, but collection is typically between 7am-6pm",
-    'if_unsure_volume': "Think in terms of washing machine loads or black bags.",
-    'pricing_guide': "Typically starts from £90 for 1-2 cubic yards, but final price depends on location and items.",
-    'what_we_take': "We take most household items including furniture, appliances, garden waste, and general rubbish. We're fully licensed for fridges and mattresses too."
+    }
 }
 
 GRAB_RULES = {
@@ -173,16 +160,7 @@ GRAB_RULES = {
     },
     'C3_materials_assessment': {
         'mixed_materials': {'script': "The majority of grabs will only take muckaway which is soil & rubble. Let me put you through to our team and they will check if we can take the other materials for you."}
-    },
-    'capacity_tonnes': "A 6-wheel grab lorry typically has a capacity of around 12 to 14 tonnes, while an 8-wheel grab lorry can usually carry approximately 16 to 18 tonnes.",
-    'reach_explanation': "Grab lorries can typically reach over walls and fences up to 6 meters from where the lorry parks.",
-    'access_requirements': "Grab lorries need good access - roughly 3 meters wide and 4 meters high clearance, plus stable ground to support the weight."
-}
-
-WASTE_BAGS_INFO = {
-    'script': "Our skip bags are for light waste only. Is this for light waste and our man and van service will collect the rubbish? We can deliver a bag out to you and you can fill it and then we collect and recycle the rubbish. We have 3 sizes: 1.5, 3.6, 4.5 cubic yards bags. Bags are great as there's no time limit and we collect when you're ready",
-    'pricing': "Bags cost from £15-25 for delivery, then collection is priced by volume when you're ready.",
-    'restrictions': "Skip bags are for light waste only - no soil, rubble, or heavy materials."
+    }
 }
 
 SMS_NOTIFICATION = '+447823656762'
