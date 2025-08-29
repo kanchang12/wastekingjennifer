@@ -251,7 +251,7 @@ CONVERSATION HISTORY:
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
-    return send_email(subject, body, 'kanchan.g12@gmail.com')
+    return send_email(subject, body, 'kanchan.ghosh@wasteking.co.uk')
 
 def send_webhook(conversation_id, data, reason):
     try:
@@ -1081,10 +1081,13 @@ def process_message_endpoint():
 
 @app.route('/')
 def index():
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('dashboard_page'))
 
 @app.route('/dashboard')
 def dashboard_page():
+
+@app.route('/dashboard/user')
+def user_dashboard_page():
     return render_template_string("""
 <!DOCTYPE html>
 <html>
