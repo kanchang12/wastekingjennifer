@@ -889,7 +889,7 @@ def send_email(subject: str, body: str, recipient: str = 'kanchan.ghosh@wastekin
 agent = WasteKingAgent()
 
 # Flask routes
-@app.route('/api/wasteking', methods=['POST'])
+@app.route('/api/wasteking', methods=['POST', 'GET'])
 def process_message():
     try:
         data = request.get_json()
